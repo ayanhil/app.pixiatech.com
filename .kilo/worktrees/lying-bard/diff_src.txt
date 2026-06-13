@@ -1,0 +1,4154 @@
+﻿diff --git a/Messages/src/App.tsx b/a/src/App.tsx
+index c6f66550..e6c6e494 100644
+--- a/Messages/src/App.tsx
++++ b/a/src/App.tsx
+@@ -1,230 +1,453 @@
+ import React, { useState, useEffect, useRef } from 'react';
+ import { onAuthStateChanged } from 'firebase/auth';
+ import { doc, onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
+-import { auth, getDb, setExternalDb, signOut, isDemoMode } from './firebase';
++import { auth, db, isDemoMode, signOut } from './firebase';
++import { demoService } from './demo-service';
+ import { UserProfile, Chat, AdminSettings } from './types';
+-import { useFilteredUsers } from './lib/useFilteredUsers';
+-import { useChatData } from './lib/useChatData';
+ import ChatList from './components/chat/ChatList';
+ import ChatWindow from './components/chat/ChatWindow';
+ import ContactList from './components/chat/ContactList';
+ import MiniChat from './components/chat/MiniChat';
+ import MobileNav from './components/layout/MobileNav';
+ import ProfileView from './components/chat/ProfileView';
+-import { Shield, MessageSquare, Mail, ChevronDown, LogOut } from 'lucide-react';
++import { Shield, MessageSquare, Mail, ChevronDown, LogOut, Settings } from 'lucide-react';
+ import { cn } from './lib/utils';
+ import AdminPanel from './components/chat/AdminPanel';
+ import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+ import { motion, AnimatePresence } from 'motion/react';
+ 
+-interface AppProps {
+-  initialUser?: UserProfile;
+-  initialUsersList?: UserProfile[];
+-  firestore?: any;
+-  storage?: any;
+-}
+-
+-export default function App({ initialUser, initialUsersList, firestore, storage }: AppProps = {}) {
+-  // Inject parent's Firestore and Storage instance if provided
+-  useEffect(() => {
+-    if (firestore) setExternalDb(firestore);
+-    if (storage) {
+-      const { setExternalStorage } = require('./firebase');
+-      setExternalStorage(storage);
+-    }
+-  }, [firestore, storage]);
+-  const [user, setUser] = useState<UserProfile | null>(initialUser || null);
+-  const [isAuthReady, setIsAuthReady] = useState(!!initialUser);
++export default function App() {
++  const [user, setUser] = useState<UserProfile | null>(null);
++  const [isAuthReady, setIsAuthReady] = useState(false);
++  const [chats, setChats] = useState<Chat[]>([]);
+   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+   const [activeTab, setActiveTab] = useState('all');
+   const [showAdmin, setShowAdmin] = useState(false);
+-  const [showContacts, setShowContacts] = useState(true);
++  const [showContacts, setShowContacts] = useState(false);
+   const [isContactsCollapsed, setIsContactsCollapsed] = useState(false);
+   const [showMiniChat, setShowMiniChat] = useState(false);
+   const [isMiniChatHidden, setIsMiniChatHidden] = useState(() => {
+-    if (typeof window === 'undefined') return false;
+     const saved = localStorage.getItem('isMiniChatHidden');
+     return saved ? JSON.parse(saved) : false;
+   });
+-  
+-  // Contacts width and Resize
+-  const [contactListWidth, setContactListWidth] = useState(384);
++  const [adminSettings, setAdminSettings] = useState<AdminSettings>(demoService.getSettings());
+   const [isResizing, setIsResizing] = useState(false);
++  const [contactListWidth, setContactListWidth] = useState(adminSettings.contactListWidth || 384);
+ 
+-  // Load Custom Hooks ÔÇö pass initialUsersList to bypass internal Firestore fetching when provided
+-  const { allUsers, filteredUsers, loading: loadingUsers, currentUser: realtimeUser } = useFilteredUsers(user, initialUsersList);
+-  
+-  // Use realtime user from hook when available (this is the real-time user with live blockedUsers, etc.)
+-  const activeUser = realtimeUser || user;
+-  const { chats, messages, loadingChats, createChat, markAsRead } = useChatData(activeUser?.uid);
++  useEffect(() => {
++    setContactListWidth(adminSettings.contactListWidth || 384);
++  }, [adminSettings.contactListWidth]);
++
++  const startResizing = (e: React.MouseEvent) => {
++    e.preventDefault();
++    setIsResizing(true);
++  };
++
++  const stopResizing = () => {
++    if (isResizing) {
++      setIsResizing(false);
++      demoService.updateSettings({ contactListWidth });
++    }
++  };
++
++  const resize = (e: MouseEvent) => {
++    if (isResizing) {
++      const newWidth = window.innerWidth - e.clientX;
++      if (newWidth > 250 && newWidth < 800) {
++        setContactListWidth(newWidth);
++      }
++    }
++  };
+ 
+-  // Keep user in sync when parent updates initialUser
+   useEffect(() => {
+-    if (initialUser) {
+-      setUser(initialUser);
+-      setIsAuthReady(true);
++    window.addEventListener('mousemove', resize);
++    window.addEventListener('mouseup', stopResizing);
++    return () => {
++      window.removeEventListener('mousemove', resize);
++      window.removeEventListener('mouseup', stopResizing);
++    };
++  }, [isResizing, contactListWidth]);
++
++  useEffect(() => {
++    if (isResizing) {
++      document.body.style.cursor = 'col-resize';
++      document.body.style.userSelect = 'none';
++    } else {
++      document.body.style.cursor = '';
++      document.body.style.userSelect = '';
+     }
+-  }, [initialUser]);
++  }, [isResizing]);
++
++  const [pinnedUserIds, setPinnedUserIds] = useState<string[]>(() => {
++    const saved = localStorage.getItem('pinnedUsers');
++    return saved ? JSON.parse(saved) : ['edouard-1']; // Edouard pinned by default
++  });
++  const [buttonPos, setButtonPos] = useState({ x: 0, y: 0 });
++  const buttonRef = useRef<HTMLDivElement>(null);
++
++  const handleToggleMiniChat = () => {
++    if (isMiniChatHidden) return;
++    setShowMiniChat(!showMiniChat);
++  };
++
++  const handleToggleMiniChatVisibility = () => {
++    setIsMiniChatHidden(prev => {
++      const next = !prev;
++      localStorage.setItem('isMiniChatHidden', JSON.stringify(next));
++      if (next) {
++        setShowMiniChat(false);
++      } else {
++        setShowMiniChat(true);
++      }
++      return next;
++    });
++  };
++
++  const handlePinUser = (userId: string) => {
++    setPinnedUserIds(prev => {
++      const isPinned = prev.includes(userId);
++      const next = isPinned ? prev.filter(id => id !== userId) : [...prev, userId];
++      localStorage.setItem('pinnedUsers', JSON.stringify(next));
++      return next;
++    });
++  };
++  const [allUsers, setAllUsers] = useState<UserProfile[]>(demoService.getUsers());
++  const [expandedRole, setExpandedRole] = useState<string | null>(null);
++  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+ 
+-  // Only run internal Firebase auth if NOT provided by parent and Firebase is configured
+   useEffect(() => {
+-    if (initialUser) return; // Parent provides user, skip internal auth
+-    if (isDemoMode || !auth) {
+-      setIsAuthReady(true); // No Firebase config, show login screen
+-      return;
++    if (isDemoMode) {
++      setAllUsers(demoService.getUsers());
++      const unsub = demoService.subscribe(() => {
++        const currentUser = demoService.getCurrentUser();
++        setUser(currentUser);
++        setAdminSettings(demoService.getSettings());
++        if (currentUser) {
++          setChats(demoService.getChats());
++          setAllUsers(demoService.getUsers());
++        }
++      });
++      setIsAuthReady(true);
++      return () => unsub();
+     }
+-    
+-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
++
++    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+       if (firebaseUser) {
+-        const userRef = doc(getDb(), 'users', firebaseUser.uid);
+-        onSnapshot(userRef, (snap) => {
++        // Fetch user profile
++        const userRef = doc(db, 'users', firebaseUser.uid);
++        const unsubUser = onSnapshot(userRef, (snap) => {
+           if (snap.exists()) {
+             setUser(snap.data() as UserProfile);
+           } else {
+-            setUser(null);
++            // Initialize user profile if it doesn't exist
++            const newUser: UserProfile = {
++              uid: firebaseUser.uid,
++              email: firebaseUser.email || '',
++              displayName: firebaseUser.displayName || 'Utilisateur',
++              photoURL: firebaseUser.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${firebaseUser.uid}`,
++              role: firebaseUser.email === 'ayanhil@gmail.com' ? 'admin' : 'commercial',
++              isOnline: true,
++              isTyping: false,
++              blockedUsers: [],
++              mutedUsers: [],
++              restrictedContacts: [],
++              permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false },
++              lastSeen: new Date().toISOString()
++            };
++            // In a real app, you'd call setDoc here
++            setUser(newUser);
+           }
+-          setIsAuthReady(true);
+         });
++
++        // Fetch chats
++        const chatsQuery = query(
++          collection(db, 'chats'),
++          where('participants', 'array-contains', firebaseUser.uid),
++          orderBy('lastMessageAt', 'desc')
++        );
++        const unsubChats = onSnapshot(chatsQuery, (snap) => {
++          setChats(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Chat)));
++        });
++
++        // Fetch all users for contact list
++        const usersQuery = collection(db, 'users');
++        const unsubUsers = onSnapshot(usersQuery, (snap) => {
++          setAllUsers(snap.docs.map(doc => doc.data() as UserProfile));
++        });
++
++        return () => {
++          unsubUser();
++          unsubChats();
++          unsubUsers();
++        };
+       } else {
+         setUser(null);
+-        setIsAuthReady(true);
+       }
++      setIsAuthReady(true);
+     });
++
+     return () => unsubscribe();
+-  }, [initialUser]);
++  }, []);
+ 
+-  const handleLogin = async () => {
+-    if (isDemoMode || !auth) return;
+-    const provider = new GoogleAuthProvider();
+-    await signInWithPopup(auth, provider);
++  const handleLogin = async (uid: string) => {
++    if (isDemoMode) {
++      demoService.login(uid);
++    } else {
++      const provider = new GoogleAuthProvider();
++      await signInWithPopup(auth, provider);
++    }
+   };
+ 
+   const handleLogout = async () => {
+-    if (!isDemoMode) await signOut();
+-    setUser(null);
++    if (isDemoMode) {
++      demoService.logout();
++    } else {
++      await signOut();
++    }
+     setActiveChatId(null);
+   };
+ 
+   useEffect(() => {
+-    if (activeChatId && activeUser) {
+-      markAsRead(activeChatId, activeUser.uid);
++    if (activeChatId && user) {
++      if (isDemoMode) {
++        demoService.markAsRead(activeChatId, user.uid);
++      }
+     }
+-  }, [activeChatId, activeUser]);
++  }, [activeChatId, user]);
+ 
+-  const handleStartChat = async (activeUserId: string) => {
+-    const existing = chats.find(c => c.participants.includes(activeUserId) && c.participants.includes(activeUser!.uid));
+-    if (existing) {
+-      setActiveChatId(existing.id);
+-      return existing.id;
++  const handleStartChat = async (userId: string) => {
++    if (isDemoMode) {
++      const chatId = await demoService.createChat(userId);
++      if (chatId) {
++        setActiveChatId(chatId);
++        return chatId;
++      }
+     }
+-    const chatId = await createChat([activeUser!.uid, activeUserId]);
+-    if (chatId) setActiveChatId(chatId);
+-    return chatId;
++    // In a real app, you'd create a chat in Firestore
+   };
+ 
+-  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+-  const [pinnedUserIds, setPinnedUserIds] = useState<string[]>(() => {
+-    const saved = localStorage.getItem('pinnedUsers');
+-    return saved ? JSON.parse(saved) : [];
+-  });
+-  const [buttonPos, setButtonPos] = useState(() => {
+-    const saved = localStorage.getItem('chatButtonPos');
+-    return saved ? JSON.parse(saved) : { x: 0, y: 0 };
+-  });
+-  const buttonRef = useRef<HTMLDivElement>(null);
+-
+-  const handleToggleMiniChat = () => setShowMiniChat(!showMiniChat);
+-  const handleToggleMiniChatVisibility = () => {
+-    setIsMiniChatHidden(prev => {
+-      const next = !prev;
+-      localStorage.setItem('isMiniChatHidden', JSON.stringify(next));
+-      if (next) setShowMiniChat(false);
+-      return next;
+-    });
+-  };
+-
+-  const handlePinUser = (activeUserId: string) => {
+-    setPinnedUserIds(prev => {
+-      const isPinned = prev.includes(activeUserId);
+-      const next = isPinned ? prev.filter(id => id !== activeUserId) : [...prev, activeUserId];
+-      localStorage.setItem('pinnedUsers', JSON.stringify(next));
+-      return next;
+-    });
++  const handleForwardMessage = async (message: any) => {
++    if (selectedUserIds.length === 0) return;
++    
++    for (const targetId of selectedUserIds) {
++      if (isDemoMode) {
++        const chatId = await demoService.createChat(targetId);
++        if (chatId) {
++          await demoService.sendMessage(chatId, message.content, message.type, message.fileUrl);
++        }
++      }
++    }
++    
++    // Clear selection after forwarding
++    setSelectedUserIds([]);
+   };
+ 
+-  if (!isAuthReady || loadingUsers || loadingChats) {
++  if (!isAuthReady) {
+     return (
+-      <div className="flex h-full min-h-[500px] items-center justify-center bg-[#f4f4f9] w-full">
++      <div className="flex h-screen items-center justify-center bg-[#f4f4f9]">
+         <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+       </div>
+     );
+   }
+ 
+-  if (!activeUser) {
++  if (!user) {
++    const roles = [
++      { id: 'admin', label: 'Administrateur', sub: 'ACC├êS COMPLET', icon: Shield, color: 'indigo', users: allUsers.filter(u => u.role === 'admin') },
++      { id: 'prestataire', label: 'Prestataire', sub: 'ACC├êS LIMIT├ë', icon: Shield, color: 'orange', users: allUsers.filter(u => u.role === 'prestataire') },
++      { id: 'commercial', label: 'Commercial', sub: 'ACC├êS LIMIT├ë', icon: Shield, color: 'green', users: allUsers.filter(u => u.role === 'commercial') },
++    ];
++
+     return (
+-      <div className="flex h-full min-h-[calc(100vh-80px)] w-full items-center justify-center bg-[#f4f4f9] p-4">
++      <div className="flex h-screen items-center justify-center bg-[#f4f4f9] p-4 overflow-y-auto">
+         <div className="w-full max-w-md my-8 rounded-[40px] bg-white p-10 shadow-2xl border border-gray-100 text-center">
+           <div className="mb-8 flex justify-center">
+-            <div className="h-24 w-24 rounded-[32px] bg-blue-100 flex items-center justify-center text-blue-600 shadow-xl shadow-blue-100/50">
+-               <Shield size={48} />
++            <div className="h-24 w-24 rounded-[32px] bg-[#7c73e6] flex items-center justify-center text-white text-5xl font-bold shadow-xl shadow-indigo-200">
++              A
+             </div>
+           </div>
+-          <h1 className="mb-2 text-3xl font-black text-[#1a1d21]">Authentification</h1>
+-          <p className="mb-10 text-gray-400 font-medium">Veuillez vous connecter pour acc├®der ├á la messagerie.</p>
+-          <button 
+-            onClick={handleLogin}
+-            className="w-full py-4 rounded-3xl bg-[#1a1d21] text-white font-bold hover:bg-black transition-all"
+-          >
+-            Se connecter avec Google
+-          </button>
++          <h1 className="mb-2 text-3xl font-black text-[#1a1d21]">Bienvenue</h1>
++          <p className="mb-10 text-gray-400 font-medium">S├®lectionnez un profil de test pour commencer</p>
++          
++          <div className="space-y-4 text-left">
++            {roles.map((role) => (
++              <div key={role.id} className="space-y-2">
++                <div 
++                  onClick={() => setExpandedRole(expandedRole === role.id ? null : role.id)}
++                  role="button"
++                  tabIndex={0}
++                  onKeyDown={(e) => {
++                    if (e.key === 'Enter' || e.key === ' ') {
++                      e.preventDefault();
++                      setExpandedRole(expandedRole === role.id ? null : role.id);
++                    }
++                  }}
++                  className={cn(
++                    "w-full flex items-center justify-between p-5 rounded-3xl transition-all border-2 cursor-pointer",
++                    expandedRole === role.id 
++                      ? (role.id === 'admin' ? "bg-indigo-50 border-indigo-200" : role.id === 'prestataire' ? "bg-orange-50 border-orange-200" : "bg-green-50 border-green-200")
++                      : "bg-gray-50 border-transparent hover:bg-gray-100"
++                  )}
++                >
++                  <div className="flex items-center gap-4">
++                    <div className={cn(
++                      "h-14 w-14 rounded-2xl flex items-center justify-center transition-all",
++                      expandedRole === role.id 
++                        ? (role.id === 'admin' ? "bg-indigo-500 text-white" : role.id === 'prestataire' ? "bg-orange-500 text-white" : "bg-green-500 text-white")
++                        : (role.id === 'admin' ? "bg-indigo-100 text-indigo-600" : role.id === 'prestataire' ? "bg-orange-100 text-orange-600" : "bg-green-100 text-green-600")
++                    )}>
++                      <role.icon size={28} />
++                    </div>
++                    <div>
++                      <p className="font-bold text-[#1a1d21] text-lg">{role.label}</p>
++                      <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{role.sub}</p>
++                    </div>
++                  </div>
++                  <motion.div
++                    animate={{ rotate: expandedRole === role.id ? 180 : 0 }}
++                  >
++                    <ChevronDown size={20} className="text-gray-400" />
++                  </motion.div>
++                </div>
++
++                <AnimatePresence>
++                  {expandedRole === role.id && (
++                    <motion.div
++                      initial={{ height: 0, opacity: 0 }}
++                      animate={{ height: 'auto', opacity: 1 }}
++                      exit={{ height: 0, opacity: 0 }}
++                      className="overflow-hidden"
++                    >
++                      <div className="p-2 space-y-1 bg-gray-50/50 rounded-3xl border border-gray-100 max-h-64 overflow-y-auto custom-scrollbar">
++                        {role.users.map((u) => (
++                          <button
++                            key={u.uid}
++                            onClick={() => handleLogin(u.uid)}
++                            className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-white hover:shadow-sm transition-all text-left group"
++                          >
++                            <img src={u.photoURL} alt="" className="h-10 w-10 rounded-full object-cover border border-gray-200" referrerPolicy="no-referrer" />
++                            <div className="flex-1">
++                              <p className="font-bold text-sm text-[#1a1d21] group-hover:text-blue-600 transition-colors">{u.displayName}</p>
++                              <p className="text-[10px] text-gray-400 font-medium">{u.email}</p>
++                            </div>
++                          </button>
++                        ))}
++                      </div>
++                    </motion.div>
++                  )}
++                </AnimatePresence>
++              </div>
++            ))}
++          </div>
++          
++          {isDemoMode && (
++            <div className="mt-10 p-4 rounded-2xl bg-indigo-50 border border-indigo-100">
++              <p className="text-[10px] text-indigo-600 font-black uppercase tracking-[0.2em]">Mode D├®mo Activ├®</p>
++            </div>
++          )}
+         </div>
+       </div>
+     );
+   }
+ 
+   const totalUnreadCount = chats.reduce((sum, chat) => {
+-     // Apply dynamic checks if needed, but filteredUsers array already ensures we don't accidentally display activeUsers we shouldn't.
+-     const otherId = chat.participants.find(id => id !== activeUser.uid);
+-     if(otherId && filteredUsers.some(u => u.uid === otherId)) {
+-        return sum + (chat.unreadCount[activeUser.uid] || 0);
+-     }
+-     return sum;
++    const otherId = chat.participants.find(id => id !== user?.uid);
++    if (otherId && user) {
++      const otherUser = allUsers.find(u => u.uid === otherId);
++      if (otherUser) {
++        // 1. If I am a commercial, I cannot see suppliers with adminOnly = true
++        if (user.role === 'commercial' && otherUser.role === 'prestataire' && otherUser.adminOnly) return sum;
++        
++        // 2. If I am a supplier with adminOnly = true, I can only see admins
++        if (user.role === 'prestataire' && user.adminOnly && otherUser.role !== 'admin') return sum;
++
++        // 3. Restricted Contacts (Isolation)
++        if (user.restrictedContacts?.includes(otherId)) return sum;
++
++        // 4. Global Isolation
++        if (user.role !== 'admin') {
++          if (user.isIsolated && otherUser.role !== 'admin') return sum;
++          if (otherUser.isIsolated) return sum;
++        }
++      }
++    }
++    return sum + (chat.unreadCount[user?.uid || ''] || 0);
+   }, 0);
+ 
+-  // Responsive Sidebar (Hidden on mobile via parent classes)
+   return (
+-    <div className="flex w-full h-[calc(100vh-80px)] bg-[#f4f4f9] overflow-hidden font-sans antialiased relative">
+-      {activeUser.permissions?.canChat === false ? (
++    <div className="flex h-screen bg-[#f4f4f9] overflow-hidden font-sans antialiased relative">
++      {/* Backdrop Blur when MiniChat is open */}
++      <AnimatePresence>
++        {showMiniChat && (
++          <motion.div 
++            initial={{ opacity: 0 }}
++            animate={{ opacity: 1 }}
++            exit={{ opacity: 0 }}
++            className="fixed inset-0 bg-black/20 backdrop-blur-md z-[190] pointer-events-none"
++          />
++        )}
++      </AnimatePresence>
++
++      {!user.permissions.canChat ? (
+         <div className="flex-1 flex items-center justify-center p-4">
+           <div className="w-full max-w-md rounded-[40px] bg-white p-10 shadow-2xl border border-gray-100 text-center">
+             <div className="mb-8 flex justify-center">
+-              <div className="h-24 w-24 rounded-[32px] bg-red-100 flex items-center justify-center text-red-600 shadow-xl">
++              <div className="h-24 w-24 rounded-[32px] bg-red-100 flex items-center justify-center text-red-600 text-5xl font-bold shadow-xl shadow-red-100/50">
+                 <Shield size={48} />
+               </div>
+             </div>
+-            <h1 className="mb-4 text-3xl font-bold">Acc├¿s Refus├®</h1>
+-            <p className="mb-8 text-gray-500 font-medium">L'administrateur vous a retir├® l'acc├¿s au Tchat.</p>
+-            <button onClick={handleLogout} className="w-full py-4 rounded-3xl bg-[#1a1d21] text-white font-bold">Se d├®connecter</button>
++            <h1 className="mb-4 text-3xl font-bold text-heading md:text-4xl">
++              <span className="text-transparent bg-clip-text bg-gradient-to-r to-emerald-600 from-sky-400">
++                Acc├¿s Refus├®
++              </span>
++            </h1>
++            <p className="mb-8 text-gray-500 font-medium leading-relaxed">
++              L'administrateur vous a retir├® l'acc├¿s au Tchat. <br />
++              Veuillez le contacter pour une r├®clamation.
++            </p>
++            <button 
++              onClick={handleLogout}
++              className="w-full py-4 rounded-3xl bg-[#1a1d21] text-white font-bold hover:bg-black transition-all flex items-center justify-center gap-2"
++            >
++              <LogOut size={20} />
++              Se d├®connecter
++            </button>
+           </div>
+         </div>
+       ) : (
+         <>
+           <main className="flex-1 flex overflow-hidden relative pb-[72px] lg:pb-0">
+-             {/* Sidebar: hidden on mobile, icons-only on tablet (md:), full on PC (lg:) */}
+             <div className={cn(
+-              "flex-shrink-0 transition-all duration-500 ease-in-out h-full border-r border-gray-200",
+-              (activeChatId || activeTab !== 'all') ? "hidden md:block" : "block w-full md:w-auto",
+-              "md:w-24 lg:w-80"
++              "w-full lg:w-80 flex-shrink-0 transition-all duration-500 ease-in-out",
++              (activeChatId || activeTab !== 'all') ? "hidden lg:block" : "block"
+             )}>
+               <ChatList 
+-                chats={chats.filter(c => {
+-                  const other = c.participants.find(p => p !== activeUser.uid);
+-                  return other ? filteredUsers.some(u => u.uid === other) : true;
+-                })}
++                chats={chats.filter(chat => {
++                  const otherId = chat.participants.find(id => id !== user.uid);
++                  if (!otherId) return true;
++                  const otherUser = allUsers.find(u => u.uid === otherId);
++                  if (!otherUser) return true;
++                  
++                  // 1. If I am a commercial, I cannot see suppliers with adminOnly = true
++                  if (user.role === 'commercial' && otherUser.role === 'prestataire' && otherUser.adminOnly) return false;
++                  
++                  // 2. If I am a supplier with adminOnly = true, I can only see admins
++                  if (user.role === 'prestataire' && user.adminOnly && otherUser.role !== 'admin') return false;
++
++                  // 3. Restricted Contacts (Isolation)
++                  if (user.restrictedContacts?.includes(otherId)) return false;
++
++                  // 4. Global Isolation
++                  if (user.role !== 'admin') {
++                    if (user.isIsolated && otherUser.role !== 'admin') return false;
++                    if (otherUser.isIsolated) return false;
++                  }
++
++                  return true;
++                })} 
+                 activeChatId={activeChatId} 
+                 onChatSelect={setActiveChatId} 
+-                currentUser={activeUser} 
+-                allUsers={filteredUsers}
++                currentUser={user} 
++                allUsers={allUsers}
+                 pinnedUserIds={pinnedUserIds}
+                 onPinUser={handlePinUser}
+                 isMiniChatHidden={isMiniChatHidden}
+@@ -233,52 +456,53 @@ export default function App({ initialUser, initialUsersList, firestore, storage
+             </div>
+             
+             <div className={cn(
+-              "flex-1 flex flex-col relative bg-white transition-all duration-500",
+-              activeChatId ? "translate-x-0 opacity-100" : "hidden md:flex opacity-0 lg:opacity-100",
++              "flex-1 flex flex-col relative bg-white transition-all duration-500 ease-in-out z-20 shadow-xl",
++              activeChatId ? "translate-x-0 opacity-100" : "translate-x-full opacity-0 lg:translate-x-0 lg:opacity-100 pointer-events-none lg:pointer-events-auto",
+               activeTab === 'profile' && "hidden lg:flex"
+             )}>
+               {activeChatId ? (
+                 <ChatWindow 
+                   chatId={activeChatId} 
+                   onBack={() => setActiveChatId(null)} 
+-                  currentUser={activeUser}
++                  currentUser={user}
+                   onShowAdmin={() => setShowAdmin(true)}
+-                  onShowInfo={() => setShowContacts(!showContacts)}
+                   pinnedUserIds={pinnedUserIds}
+                   onPinUser={handlePinUser}
+                   selectedUserIds={selectedUserIds}
+-                  onForward={() => {}}
++                  onForward={handleForwardMessage}
+                 />
+               ) : (
+-                <div className="hidden lg:flex flex-1 flex-col items-center justify-center p-8 text-center">
+-                  <div className="w-32 h-32 bg-white rounded-[48px] flex items-center justify-center text-indigo-600 mb-8 shadow-xl">
++                <div className="hidden lg:flex flex-1 flex-col items-center justify-center p-8 text-center bg-[#f4f4f9]/30">
++                  <div className="w-32 h-32 bg-white rounded-[48px] flex items-center justify-center text-indigo-600 mb-8 shadow-xl shadow-indigo-100/50">
+                     <MessageSquare size={56} />
+                   </div>
+-                  <h2 className="text-3xl font-black mb-3">S├®lectionnez une conversation</h2>
++                  <h2 className="text-3xl font-black text-[#1a1d21] mb-3">S├®lectionnez une conversation</h2>
++                  <p className="text-gray-400 max-w-xs font-medium">Choisissez une discussion dans la liste pour commencer ├á ├®changer avec votre ├®quipe.</p>
+                 </div>
+               )}
+             </div>
+ 
+-            {showContacts && (
+-              <div className={cn(
+-                  "hidden lg:flex flex-shrink-0 h-full border-l border-gray-200",
+-                  isContactsCollapsed ? "w-24" : "w-[384px]"
+-                )}>
+-                <ContactList 
+-                  users={activeUser?.role === 'admin' ? allUsers : filteredUsers} 
+-                  onSelectContact={handleStartChat} 
+-                  currentUser={activeUser}
+-                  isCollapsed={isContactsCollapsed}
+-                  onToggleCollapse={() => setIsContactsCollapsed(!isContactsCollapsed)}
+-                  selectedUsers={selectedUserIds}
+-                  onSelectedUsersChange={setSelectedUserIds}
+-                  activeChatId={activeChatId}
+-                />
+-              </div>
+-            )}
++            {/* Contact List (Right Sidebar) */}
++            <div className="hidden lg:block border-l border-gray-100 bg-white relative group" style={{ width: contactListWidth }}>
++              <ContactList 
++                users={allUsers} 
++                onSelectContact={handleStartChat} 
++                currentUser={user}
++                selectedUsers={selectedUserIds}
++                onSelectedUsersChange={setSelectedUserIds}
++                activeChatId={activeChatId}
++              />
++              
++              {/* Resize Handle */}
++              <div 
++                onMouseDown={startResizing}
++                className="absolute left-0 top-0 w-1 h-full cursor-col-resize hover:bg-blue-500/30 transition-colors z-50"
++              />
++            </div>
++
+             {activeTab === 'profile' && (
+               <div className="lg:hidden flex flex-1 flex-col overflow-hidden">
+-                <ProfileView user={activeUser} onLogout={handleLogout} />
++                <ProfileView user={user} onLogout={handleLogout} />
+               </div>
+             )}
+           </main>
+@@ -291,131 +515,40 @@ export default function App({ initialUser, initialUsersList, firestore, storage
+         </>
+       )}
+ 
+-      {showAdmin && activeUser?.role === 'admin' && (
+-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/40 backdrop-blur-md">
+-          <div className="w-full max-w-2xl h-[85vh] bg-white rounded-[48px] shadow-2xl overflow-hidden">
+-            <AdminPanel onClose={() => setShowAdmin(false)} currentUser={activeUser} />
+-          </div>
+-        </div>
+-      )}
+-
+-      {/* MiniChat - TOUJOURS visible */}
+-      <MiniChat 
+-          isOpen={showMiniChat} 
+-          onClose={() => setShowMiniChat(false)} 
+-          users={filteredUsers} 
+-          currentUser={activeUser || user as any}
+-          chats={chats}
+-          onChatSelect={setActiveChatId}
+-          onStartChat={handleStartChat}
+-          buttonPos={buttonPos}
+-          pinnedUserIds={pinnedUserIds}
+-          onPinUser={handlePinUser}
+-          totalUnreadCount={totalUnreadCount}
+-          selectedUserIds={selectedUserIds}
+-          onForward={() => {}}
+-      />
+-      
+-      {/* Bouton flottant - TOUJOURS visible */}
+-      <motion.div 
+-        ref={buttonRef}
+-        drag
+-        dragMomentum={false}
+-        onDragEnd={(_, info) => {
+-           const newPos = { x: buttonPos.x + info.offset.x, y: buttonPos.y + info.offset.y };
+-           setButtonPos(newPos);
+-           localStorage.setItem('chatButtonPos', JSON.stringify(newPos));
+-        }}
+-        initial={false}
+-        animate={{ x: buttonPos.x, y: buttonPos.y }}
+-        className="fixed z-[200] cursor-grab active:cursor-grabbing"
+-        style={{ left: '2rem', top: '50%', marginTop: '-2.5rem' } as React.CSSProperties}
+-      >
+-      <div className="relative">
+-        <button onClick={handleToggleMiniChat} className={cn("w-20 h-20 bg-[#0a0b0d] text-white rounded-[28px] shadow-2xl flex items-center justify-center hover:scale-105 transition-all group border border-white/5", showMiniChat && "opacity-0 pointer-events-none")}>
+-          <div className="absolute inset-0 shadow-[inset_0_0_25px_rgba(59,130,246,0.15)] rounded-[28px]" />
+-          <div className="relative z-10">
+-            <svg viewBox="0 0 24 24" className="w-11 h-11 transition-transform group-hover:rotate-6 drop-shadow" xmlns="http://www.w3.org/2000/svg">
+-              <path d="M22 12L3 3L6.5 12L22 12Z" fill="white" />
+-              <path d="M22 12L6.5 12L3 21L22 12Z" fill="#d1d5db" />
+-            </svg>
+-          </div>
+-        </button>
+-        <AnimatePresence>
+-          {!showMiniChat && totalUnreadCount > 0 && (
+-            <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} className="absolute -top-2 -right-2 z-50">
+-              <div className="relative h-9 w-9 bg-blue-600 rounded-full flex items-center justify-center text-sm font-black shadow-lg text-white border border-blue-400">
+-                {totalUnreadCount}
+-              </div>
+-            </motion.div>
++        {/* Mini Chat Widget (M1 Menu) - Always rendered if user exists */}
++        <div className="hidden lg:block">
++          {!isMiniChatHidden && (
++            <MiniChat 
++              isOpen={showMiniChat} 
++              onClose={() => {
++                setShowMiniChat(false);
++                setIsMiniChatHidden(true);
++                localStorage.setItem('isMiniChatHidden', JSON.stringify(true));
++              }} 
++              users={allUsers} 
++              currentUser={user} 
++              chats={chats}
++              onChatSelect={setActiveChatId}
++              onStartChat={handleStartChat}
++              buttonPos={buttonPos}
++              pinnedUserIds={pinnedUserIds}
++              onPinUser={handlePinUser}
++              totalUnreadCount={totalUnreadCount}
++              selectedUserIds={selectedUserIds}
++              onForward={handleForwardMessage}
++              activeChatId={activeChatId}
++              onSelectedUsersChange={setSelectedUserIds}
++            />
+           )}
+-        </AnimatePresence>
+-      </div>
+-     </motion.div>
+-
+-      {/* Admin Panel */}
+-      {showAdmin && activeUser?.role === 'admin' && (
+-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/40 backdrop-blur-md">
+-          <div className="w-full max-w-2xl h-[85vh] bg-white rounded-[48px] shadow-2xl overflow-hidden">
+-            <AdminPanel onClose={() => setShowAdmin(false)} currentUser={activeUser} />
+-          </div>
+         </div>
+-      )}
+ 
+-      {/* MiniChat - visible sur toute l'application quand connect├® */}
+-      {activeUser && (
+-        <>
+-        <MiniChat 
+-            isOpen={showMiniChat} 
+-            onClose={() => setShowMiniChat(false)} 
+-            users={activeUser?.role === 'admin' ? allUsers : filteredUsers} 
+-            currentUser={activeUser}
+-            chats={chats}
+-            onChatSelect={setActiveChatId}
+-            onStartChat={handleStartChat}
+-            buttonPos={buttonPos}
+-            pinnedUserIds={pinnedUserIds}
+-            onPinUser={handlePinUser}
+-            totalUnreadCount={totalUnreadCount}
+-            selectedUserIds={selectedUserIds}
+-            onForward={() => {}}
+-        />
+-        <motion.div 
+-          ref={buttonRef}
+-          drag
+-          dragMomentum={false}
+-          onDragEnd={(_, info) => {
+-             const newPos = { x: buttonPos.x + info.offset.x, y: buttonPos.y + info.offset.y };
+-             setButtonPos(newPos);
+-             localStorage.setItem('chatButtonPos', JSON.stringify(newPos));
+-          }}
+-          initial={false}
+-          animate={{ x: buttonPos.x, y: buttonPos.y }}
+-          className="fixed z-[200] cursor-grab active:cursor-grabbing"
+-          style={{ left: '2rem', top: '50%', marginTop: '-2.5rem' } as React.CSSProperties}
+-        >
+-        <div className="relative">
+-          <button onClick={handleToggleMiniChat} className={cn("w-20 h-20 bg-[#0a0b0d] text-white rounded-[28px] shadow-2xl flex items-center justify-center hover:scale-105 transition-all group border border-white/5", showMiniChat && "opacity-0 pointer-events-none")}>
+-            <div className="absolute inset-0 shadow-[inset_0_0_25px_rgba(59,130,246,0.15)] rounded-[28px]" />
+-            <div className="relative z-10">
+-              <svg viewBox="0 0 24 24" className="w-11 h-11 transition-transform group-hover:rotate-6 drop-shadow" xmlns="http://www.w3.org/2000/svg">
+-                <path d="M22 12L3 3L6.5 12L22 12Z" fill="white" />
+-                <path d="M22 12L6.5 12L3 21L22 12Z" fill="#d1d5db" />
+-              </svg>
+-            </div>
+-          </button>
+-          <AnimatePresence>
+-            {!showMiniChat && totalUnreadCount > 0 && (
+-              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} className="absolute -top-2 -right-2 z-50">
+-                <div className="relative h-9 w-9 bg-blue-600 rounded-full flex items-center justify-center text-sm font-black shadow-lg text-white border border-blue-400">
+-                  {totalUnreadCount}
+-                </div>
+-              </motion.div>
+-            )}
+-          </AnimatePresence>
++      {/* Admin Panel Overlay */}
++      {showAdmin && user.role === 'admin' && (
++        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/40 backdrop-blur-md animate-in fade-in duration-300">
++          <div className="w-full max-w-2xl h-[85vh] bg-white rounded-[48px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
++            <AdminPanel onClose={() => setShowAdmin(false)} currentUser={user} />
++          </div>
+         </div>
+-       </motion.div>
+-       </>
+       )}
+     </div>
+   );
+diff --git a/Messages/src/components/chat/AdminPanel.tsx b/a/src/components/chat/AdminPanel.tsx
+index 4be18a00..17d3ec76 100644
+--- a/Messages/src/components/chat/AdminPanel.tsx
++++ b/a/src/components/chat/AdminPanel.tsx
+@@ -1,7 +1,8 @@
+ import React, { useState, useEffect } from 'react';
+ import { X, Shield, Check, CheckCheck } from 'lucide-react';
+ import { doc, updateDoc, onSnapshot, collection } from 'firebase/firestore';
+-import { getDb } from '../../firebase';
++import { db, isDemoMode } from '../../firebase';
++import { demoService } from '../../demo-service';
+ import { UserProfile, AdminSettings } from '../../types';
+ import { cn } from '../../lib/utils';
+ 
+@@ -16,12 +17,22 @@ export default function AdminPanel({ onClose, currentUser }: AdminPanelProps) {
+   const [users, setUsers] = useState<UserProfile[]>([]);
+ 
+   useEffect(() => {
+-    const unsubSettings = onSnapshot(doc(getDb(), 'settings', 'global'), (snap) => {
++    if (isDemoMode) {
++      setSettings(demoService.getSettings());
++      setUsers(demoService.getUsers());
++      const unsub = demoService.subscribe(() => {
++        setSettings(demoService.getSettings());
++        setUsers(demoService.getUsers());
++      });
++      return () => unsub();
++    }
++
++    const unsubSettings = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
+       if (snap.exists()) setSettings(snap.data() as AdminSettings);
+     });
+ 
+-    const unsubUsers = onSnapshot(collection(getDb(), 'users'), (snap) => {
+-      const u = snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile));
++    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
++      const u = snap.docs.map(d => d.data() as UserProfile);
+       setUsers(u);
+     });
+ 
+@@ -32,11 +43,19 @@ export default function AdminPanel({ onClose, currentUser }: AdminPanelProps) {
+   }, []);
+ 
+   const updateGlobalSetting = async (key: keyof AdminSettings, value: any) => {
+-    await updateDoc(doc(getDb(), 'settings', 'global'), { [key]: value });
++    if (isDemoMode) {
++      demoService.updateSettings({ [key]: value });
++      return;
++    }
++    await updateDoc(doc(db, 'settings', 'global'), { [key]: value });
+   };
+ 
+   const updateUserField = async (userId: string, field: string, value: any) => {
+-    await updateDoc(doc(getDb(), 'users', userId), { [field]: value });
++    if (isDemoMode) {
++      demoService.updateUserField(userId, field, value);
++      return;
++    }
++    await updateDoc(doc(db, 'users', userId), { [field]: value });
+   };
+ 
+   if (!settings) return null;
+@@ -130,17 +149,13 @@ export default function AdminPanel({ onClose, currentUser }: AdminPanelProps) {
+                   </select>
+ 
+                   <button 
+-                    onClick={() => {
+-                      const currentCanChat = user.permissions?.canChat !== false;
+-                      const newPermissions = { ...(user.permissions || {}), canChat: !currentCanChat };
+-                      updateUserField(user.uid, 'permissions', newPermissions);
+-                    }}
++                    onClick={() => updateUserField(user.uid, 'permissions.canChat', !user.permissions.canChat)}
+                     className={cn(
+                       "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+-                      (user.permissions?.canChat !== false) ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
++                      user.permissions.canChat ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
+                     )}
+                   >
+-                    {(user.permissions?.canChat !== false) ? 'Chat Activ├®' : 'Chat D├®sactiv├®'}
++                    {user.permissions.canChat ? 'Chat Activ├®' : 'Chat D├®sactiv├®'}
+                   </button>
+                 </div>
+               </div>
+diff --git a/Messages/src/components/chat/ChatList.tsx b/a/src/components/chat/ChatList.tsx
+index b1838ff5..e7b21879 100644
+--- a/Messages/src/components/chat/ChatList.tsx
++++ b/a/src/components/chat/ChatList.tsx
+@@ -1,10 +1,12 @@
+ import React, { useState, useEffect } from 'react';
+-import { Search, Pin, MoreVertical, Image, Video, Mic, FileText, Settings } from 'lucide-react';
++import { Search, Pin, MoreVertical, Image, Video, Mic, FileText, Settings, Mail } from 'lucide-react';
++import { motion } from 'motion/react';
+ import { format } from 'date-fns';
+ import { UserProfile, Chat } from '../../types';
+ import { cn, formatTimestamp } from '../../lib/utils';
+-import { getDb } from '../../firebase';
+-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
++import { db, isDemoMode } from '../../firebase';
++import { demoService } from '../../demo-service';
++import { doc, getDoc } from 'firebase/firestore';
+ 
+ interface ChatListProps {
+   chats: Chat[];
+@@ -79,35 +81,41 @@ export default function ChatList({
+ 
+   return (
+     <div className="w-80 bg-[#f4f4f9] h-full flex flex-col border-r border-gray-200 pb-20 lg:pb-0">
+-      <div className="p-6 border-b border-gray-100 flex items-center justify-between gap-4">
++      <div className="px-6 py-6 border-b border-gray-100 flex items-center justify-between gap-4">
+         <h1 className="text-3xl font-bold text-heading">
+           <span className="text-transparent bg-clip-text bg-gradient-to-r to-emerald-600 from-sky-400">
+-            Discussions
++            Discussion
+           </span>
+         </h1>
+         
+-        <div className="relative group/tooltip flex-shrink-0">
++        <div className="flex-shrink-0">
+           <button 
+             onClick={onToggleMiniChatVisibility}
+-            className="h-10 w-10 rounded-xl bg-[#1a1d21] flex items-center justify-center shadow-lg shadow-black/10 hover:scale-105 active:scale-95 transition-all"
++            className="h-11 w-11 rounded-xl bg-black flex items-center justify-center shadow-lg shadow-black/10 hover:scale-105 active:scale-95 transition-all group border border-[#15bcd7]/20"
+           >
+-            <Settings 
+-              size={18} 
+-              className={cn(
+-                "transition-all duration-300",
+-                isMiniChatHidden ? "text-blue-400/40" : "text-blue-400 animate-spin-slow"
+-              )} 
+-            />
++            <motion.div
++              animate={{ 
++                rotate: isMiniChatHidden ? 0 : [0, -10, 10, -10, 10, 0],
++                scale: isMiniChatHidden ? 0.9 : 1,
++                opacity: isMiniChatHidden ? 0.4 : 1
++              }}
++              whileTap={{ scale: 0.8 }}
++              transition={{ 
++                rotate: isMiniChatHidden ? { duration: 0.3 } : { duration: 0.5, repeat: 0 },
++                scale: { type: 'spring', damping: 10, stiffness: 100 }
++              }}
++            >
++              <Mail 
++                size={22} 
++                className={cn(
++                  "transition-all duration-300 text-[#15bcd7] [&>rect]:text-[#53a6da]"
++                )} 
++              />
++            </motion.div>
+           </button>
+-          
+-          {/* Tooltip */}
+-          <div className="absolute top-full right-0 mt-2 px-3 py-2 bg-[#1a1d21] text-white text-[10px] font-bold rounded-xl opacity-0 group-hover/tooltip:opacity-100 transition-all pointer-events-none whitespace-nowrap z-50 shadow-xl border border-white/10">
+-            {isMiniChatHidden ? "Afficher le mini chat flottant" : "Masquer le mini chat flottant"}
+-            <div className="absolute bottom-full right-4 border-4 border-transparent border-b-[#1a1d21]" />
+-          </div>
+         </div>
+       </div>
+-      <div className="p-4">
++      <div className="px-6 py-4">
+         <div className="flex items-center gap-2">
+           <div className="flex-1 relative group">
+             <input
+@@ -118,8 +126,8 @@ export default function ChatList({
+               onChange={(e) => setSearchQuery(e.target.value)}
+             />
+           </div>
+-          <button className="h-11 w-11 rounded-2xl bg-[#1a1d21] flex items-center justify-center text-white shadow-lg shadow-black/10 hover:scale-105 active:scale-95 transition-all">
+-            <Search size={18} />
++          <button className="h-11 w-11 rounded-2xl bg-black flex items-center justify-center text-[#15bcd7] shadow-lg shadow-black/10 hover:scale-105 active:scale-95 transition-all border border-[#15bcd7]/20">
++            <Search size={22} />
+           </button>
+         </div>
+       </div>
+@@ -177,10 +185,14 @@ function ChatItem({ chat, isActive, onClick, currentUser, isPinned, onPin }: { c
+     const otherId = chat.participants.find(id => id !== currentUser.uid);
+     if (!otherId) return;
+ 
+-    const unsub = onSnapshot(doc(getDb(), 'users', otherId), (snap) => {
++    if (isDemoMode) {
++      setOtherUser(demoService.getUsers().find(u => u.uid === otherId) || null);
++      return;
++    }
++
++    getDoc(doc(db, 'users', otherId)).then(snap => {
+       if (snap.exists()) setOtherUser(snap.data() as UserProfile);
+     });
+-    return () => unsub();
+   }, [chat, currentUser.uid]);
+ 
+   if (!otherUser) return null;
+diff --git a/Messages/src/components/chat/ChatWindow.tsx b/a/src/components/chat/ChatWindow.tsx
+index 5a12abf0..9b9192ef 100644
+--- a/Messages/src/components/chat/ChatWindow.tsx
++++ b/a/src/components/chat/ChatWindow.tsx
+@@ -1,8 +1,8 @@
+ import React, { useState, useEffect, useRef } from 'react';
+-import { X, MoreVertical, Ban, Paperclip, Video, Mic, Send, Image as ImageIcon, Trash2, StopCircle, Play, Pause, Search, Shield, Users, ChevronLeft, Phone, MessageSquare, Settings, UserX, Bell, BellOff, Eye, EyeOff, ShieldOff, ChevronDown } from 'lucide-react';
+-import { doc, updateDoc, onSnapshot, collection, query, orderBy, limit, addDoc, serverTimestamp, getDoc, getDocs, deleteDoc, increment } from 'firebase/firestore';
+-import { getDb, getStorageInstance, handleFirestoreError, OperationType } from '../../firebase';
+-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
++import { X, MoreVertical, Ban, Paperclip, Video, Mic, Send, Mail, Image as ImageIcon, Trash2, StopCircle, Play, Pause, Search, Shield, Users, ChevronLeft, Phone, MessageSquare, Settings, UserX, Bell, BellOff, Eye, EyeOff, ShieldOff, ChevronDown } from 'lucide-react';
++import { doc, updateDoc, onSnapshot, collection, query, orderBy, limit, addDoc, serverTimestamp, getDoc, increment } from 'firebase/firestore';
++import { db, storage, handleFirestoreError, OperationType, isDemoMode } from '../../firebase';
++import { demoService } from '../../demo-service';
+ import { UserProfile, Message, MessageType, Chat } from '../../types';
+ import { cn } from '../../lib/utils';
+ import MessageItem from './MessageItem';
+@@ -13,7 +13,7 @@ interface ChatWindowProps {
+   onBack: () => void;
+   currentUser: UserProfile;
+   onShowAdmin: () => void;
+-  onShowInfo: () => void;
++  onShowInfo?: () => void;
+   isMiniChat?: boolean;
+   pinnedUserIds?: string[];
+   onPinUser?: (userId: string) => void;
+@@ -30,25 +30,6 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+   const [isUploading, setIsUploading] = useState(false);
+   const [isRecording, setIsRecording] = useState(false);
+   const [recordingTime, setRecordingTime] = useState(0);
+-  
+-  // Local state for instant UI updates
+-  const [localBlockedUsers, setLocalBlockedUsers] = useState<string[]>(currentUser.blockedUsers || []);
+-  const [localMutedUsers, setLocalMutedUsers] = useState<string[]>(currentUser.mutedUsers || []);
+-  const [localOtherUserPerms, setLocalOtherUserPerms] = useState<{canChat?: boolean} | null>(otherUser?.permissions || null);
+-  
+-  // Sync local state when currentUser changes
+-  useEffect(() => {
+-    setLocalBlockedUsers(currentUser.blockedUsers || []);
+-    setLocalMutedUsers(currentUser.mutedUsers || []);
+-  }, [currentUser.blockedUsers, currentUser.mutedUsers]);
+-
+-  // Sync local otherUser permissions when otherUser changes
+-  useEffect(() => {
+-    if (otherUser?.permissions) {
+-      setLocalOtherUserPerms(otherUser.permissions);
+-    }
+-  }, [otherUser?.permissions]);
+-
+   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+   const fileInputRef = useRef<HTMLInputElement>(null);
+@@ -66,10 +47,6 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+ 
+   const startRecording = async () => {
+     try {
+-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+-        alert("Votre navigateur ne supporte pas l'enregistrement audio ou vous n'├¬tes pas sur une connexion s├®curis├®e (HTTPS/localhost).");
+-        return;
+-      }
+       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+       const mediaRecorder = new MediaRecorder(stream);
+       mediaRecorderRef.current = mediaRecorder;
+@@ -78,20 +55,19 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+       mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+       mediaRecorder.onstop = () => {
+         const blob = new Blob(chunks, { type: 'audio/ogg; codecs=opus' });
+-        sendVoiceMessage(blob);
++        const url = URL.createObjectURL(blob);
++        sendVoiceMessage(url);
+         stream.getTracks().forEach(track => track.stop());
+       };
+ 
+       mediaRecorder.start();
+       setIsRecording(true);
+       setRecordingTime(0);
+-      if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
+       recordingIntervalRef.current = setInterval(() => {
+         setRecordingTime(prev => prev + 1);
+       }, 1000);
+     } catch (err) {
+       console.error("Error accessing microphone:", err);
+-      alert("Impossible d'acc├®der au microphone. Veuillez v├®rifier vos autorisations.");
+     }
+   };
+ 
+@@ -109,37 +85,20 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+     return `${mins}:${secs.toString().padStart(2, '0')}`;
+   };
+ 
+-  const sendVoiceMessage = async (blob: Blob) => {
+-    let fileUrl = URL.createObjectURL(blob);
+-    try {
+-      const storageInstance = getStorageInstance();
+-      if (storageInstance) {
+-        const storageRef = ref(storageInstance, `chats/${chatId}/${Date.now()}_voice.ogg`);
+-        await uploadBytes(storageRef, blob);
+-        fileUrl = await getDownloadURL(storageRef);
+-      }
+-    } catch (e) {
+-      console.error('Upload Error, fallback a local url:', e);
+-    }
+-    
+-    try {
++  const sendVoiceMessage = (url: string) => {
++    if (isDemoMode) {
++      demoService.sendMessage(chatId, 'Message vocal', 'audio', url);
++    } else {
+       const msgData: Partial<Message> = {
+         chatId,
+         senderId: currentUser.uid,
+         content: 'Message vocal',
+         type: 'audio',
+-        fileUrl: fileUrl,
++        fileUrl: url,
+         status: 'sent',
+         createdAt: serverTimestamp()
+       };
+-      await addDoc(collection(getDb(), 'chats', chatId, 'messages'), msgData);
+-      await updateDoc(doc(getDb(), 'chats', chatId), {
+-        lastMessage: 'Message vocal',
+-        lastMessageAt: serverTimestamp(),
+-        [`unreadCount.${otherUser?.uid || ''}`]: increment(1)
+-      });
+-    } catch (err) {
+-      console.error('Firestore Error:', err);
++      addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
+     }
+   };
+ 
+@@ -159,40 +118,27 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+     else if (file.type.startsWith('video/')) type = 'video';
+     else if (file.type.startsWith('audio/')) type = 'audio';
+ 
+-    let fileUrl = URL.createObjectURL(file);
+-    try {
+-      const storageInstance = getStorageInstance();
+-      if (storageInstance) {
+-        const storageRef = ref(storageInstance, `chats/${chatId}/${Date.now()}_${file.name}`);
+-        await uploadBytes(storageRef, file);
+-        fileUrl = await getDownloadURL(storageRef);
+-      }
+-    } catch (e) {
+-      console.error('Upload error, fallback local url:', e);
+-    }
++    // Mock upload URL
++    const mockUrl = URL.createObjectURL(file);
+     
+-    try {
++    if (isDemoMode) {
++      demoService.sendMessage(chatId, file.name, type, mockUrl);
++    } else {
++      // Real upload logic would go here
+       const msgData: Partial<Message> = {
+         chatId,
+         senderId: currentUser.uid,
+         content: file.name,
+         type,
+-        fileUrl: fileUrl,
++        fileUrl: mockUrl,
+         status: 'sent',
+         createdAt: serverTimestamp()
+       };
+-      await addDoc(collection(getDb(), 'chats', chatId, 'messages'), msgData);
+-      await updateDoc(doc(getDb(), 'chats', chatId), {
+-        lastMessage: file.name,
+-        lastMessageAt: serverTimestamp(),
+-        [`unreadCount.${otherUser?.uid || ''}`]: increment(1)
+-      });
+-    } catch (err) {
+-      console.error(err);
+-    } finally {
+-      setIsUploading(false);
+-      if (fileInputRef.current) fileInputRef.current.value = '';
++      await addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
+     }
++    
++    setIsUploading(false);
++    if (fileInputRef.current) fileInputRef.current.value = '';
+   };
+ 
+   useEffect(() => {
+@@ -200,23 +146,43 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+   }, [messages]);
+ 
+   useEffect(() => {
++    if (isDemoMode) {
++      const unsub = demoService.subscribe(() => {
++        setMessages(demoService.getMessages(chatId));
++        const chats = demoService.getChats();
++        const chat = chats.find(c => c.id === chatId);
++        if (chat) {
++          const otherId = chat.participants.find(id => id !== currentUser.uid);
++          if (otherId) setOtherUser(demoService.getUsers().find(u => u.uid === otherId) || null);
++        }
++      });
++      setMessages(demoService.getMessages(chatId));
++      const chats = demoService.getChats();
++      const chat = chats.find(c => c.id === chatId);
++      if (chat) {
++        const otherId = chat.participants.find(id => id !== currentUser.uid);
++        if (otherId) setOtherUser(demoService.getUsers().find(u => u.uid === otherId) || null);
++      }
++      return () => unsub();
++    }
++
+     // Real Firestore logic
+     const fetchOtherUser = async () => {
+-      const snap = await getDoc(doc(getDb(), 'chats', chatId));
++      const snap = await getDoc(doc(db, 'chats', chatId));
+       if (!snap.exists()) return;
+       const chat = snap.data() as Chat;
+       const otherId = chat.participants.find(id => id !== currentUser.uid);
+       if (otherId) {
+-        return onSnapshot(doc(getDb(), 'users', otherId), (uSnap) => {
++        return onSnapshot(doc(db, 'users', otherId), (uSnap) => {
+           setOtherUser(uSnap.data() as UserProfile);
+         });
+       }
+     };
+-    let unsubUser: any;
+-    fetchOtherUser().then(u => unsubUser = u);
++    let unsub: any;
++    fetchOtherUser().then(u => unsub = u);
+ 
+     const q = query(
+-      collection(getDb(), 'chats', chatId, 'messages'),
++      collection(db, 'chats', chatId, 'messages'),
+       orderBy('createdAt', 'asc'),
+       limit(100)
+     );
+@@ -225,12 +191,17 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+       setMessages(newMessages);
+       
+       // Mark as read
+-      updateDoc(doc(getDb(), 'chats', chatId), { [`unreadCount.${currentUser.uid}`]: 0 });
++      if (isDemoMode) {
++        demoService.markAsRead(chatId, currentUser.uid);
++      } else {
++        updateDoc(doc(db, 'chats', chatId), { [`unreadCount.${currentUser.uid}`]: 0 });
++        // In a real app, we would also update individual message statuses
++      }
+     });
+ 
+     return () => {
+       unsubscribe();
+-      if (unsubUser) unsubUser();
++      if (unsub) unsub();
+     };
+   }, [chatId, currentUser.uid]);
+ 
+@@ -247,6 +218,11 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+     const content = inputText;
+     setInputText('');
+     
++    if (isDemoMode) {
++      demoService.sendMessage(chatId, content, 'text');
++      return;
++    }
++
+     const msgData: Partial<Message> = {
+       chatId,
+       senderId: currentUser.uid,
+@@ -256,8 +232,8 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+       createdAt: serverTimestamp()
+     };
+ 
+-    await addDoc(collection(getDb(), 'chats', chatId, 'messages'), msgData);
+-    await updateDoc(doc(getDb(), 'chats', chatId), {
++    await addDoc(collection(db, 'chats', chatId, 'messages'), msgData);
++    await updateDoc(doc(db, 'chats', chatId), {
+       lastMessage: content,
+       lastMessageAt: serverTimestamp(),
+       [`unreadCount.${otherUser?.uid}`]: increment(1)
+@@ -265,133 +241,72 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+   };
+ 
+   const handleClearHistory = async () => {
+-    try {
+-      // First verify user is a participant
+-      const chatRef = doc(getDb(), 'chats', chatId);
+-      const chatDoc = await getDoc(chatRef);
+-      if (!chatDoc.exists()) {
+-        console.error('Chat not found');
+-        return;
+-      }
+-      
+-      const chatData = chatDoc.data();
+-      const isParticipant = chatData.participants.includes(currentUser.uid);
+-      console.log('User is participant:', isParticipant, 'uid:', currentUser.uid, 'participants:', chatData.participants);
+-      
+-      if (!isParticipant) {
+-        console.error('User is not a participant of this chat');
+-        return;
+-      }
+-      
+-      // Clear chat history - delete all messages in the subcollection
+-      const messagesRef = collection(getDb(), `chats/${chatId}/messages`);
+-      const messagesSnapshot = await getDocs(query(messagesRef));
+-      console.log('Messages to delete:', messagesSnapshot.size);
+-      
+-      // Delete all messages one by one for better error handling
+-      for (const msgDoc of messagesSnapshot.docs) {
+-        await deleteDoc(msgDoc.ref);
+-      }
+-      
+-      // Also clear lastMessage and lastMessageAt from chat
+-      await updateDoc(chatRef, {
+-        lastMessage: '',
+-        lastMessageAt: null
+-      });
+-      
++    if (isDemoMode) {
++      await demoService.clearHistory(chatId);
+       setShowMenu(false);
+-    } catch (error: any) {
+-      console.error('Error clearing history:', {
+-        code: error.code,
+-        message: error.message,
+-        operation: 'delete',
+-        collection: `chats/${chatId}/messages`,
+-        userId: currentUser.uid,
+-        chatId: chatId
+-      });
+-      // Don't throw - just log the error to avoid crashing
+     }
+   };
+ 
+   const handleBlockUser = async () => {
+-    if (otherUser) {
+-      const isBlocked = localBlockedUsers.includes(otherUser.uid);
+-      const newBlocked = isBlocked 
+-        ? localBlockedUsers.filter(id => id !== otherUser.uid)
+-        : [...localBlockedUsers, otherUser.uid];
+-      
+-      // Instant UI update
+-      setLocalBlockedUsers(newBlocked);
+-      
+-      // Firestore update
+-      await updateDoc(doc(getDb(), 'users', currentUser.uid), { blockedUsers: newBlocked });
++    if (otherUser && isDemoMode) {
++      await demoService.blockUser(otherUser.uid);
+       setShowMenu(false);
+     }
+   };
+ 
+   const handleRemoveAccess = async () => {
+-    if (otherUser) {
+-      const currentCanChat = localOtherUserPerms?.canChat !== false;
+-      const newPermissions = { ...localOtherUserPerms, canChat: !currentCanChat };
+-      
+-      // Instant UI update
+-      setLocalOtherUserPerms(newPermissions);
+-      
+-      // Firestore update
+-      await updateDoc(doc(getDb(), 'users', otherUser.uid), { permissions: newPermissions });
++    if (otherUser && isDemoMode) {
++      const newPermissions = { ...otherUser.permissions, canChat: !otherUser.permissions.canChat };
++      await demoService.updateUserField(otherUser.uid, 'permissions', newPermissions);
+       setShowMenu(false);
+     }
+   };
+ 
+   const handleToggleNotifications = async () => {
+-     // Already handled via handleToggleMute which controls notifications
++    if (isDemoMode) {
++      await demoService.toggleNotificationsBlocked();
++    }
+   };
+ 
+   const handleToggleMute = async () => {
+-    if (otherUser) {
+-      const isMuted = localMutedUsers.includes(otherUser.uid);
+-      const newMuted = isMuted 
+-        ? localMutedUsers.filter(id => id !== otherUser.uid)
+-        : [...localMutedUsers, otherUser.uid];
+-      
+-      // Instant UI update
+-      setLocalMutedUsers(newMuted);
+-      
+-      // Firestore update
+-      await updateDoc(doc(getDb(), 'users', currentUser.uid), { mutedUsers: newMuted });
++    if (isDemoMode && otherUser) {
++      await demoService.toggleMuteUser(otherUser.uid);
+     }
+   };
+ 
+   const handleToggleAdminOnly = async () => {
+-    if (otherUser) {
+-      await updateDoc(doc(getDb(), 'users', otherUser.uid), { adminOnly: !otherUser.adminOnly });
++    if (isDemoMode && otherUser) {
++      await demoService.toggleAdminOnly(otherUser.uid);
+     }
+   };
+ 
+   const handleReact = async (messageId: string, emoji: string) => {
+-    // Real Firestore logic
+-    const msgRef = doc(getDb(), 'chats', chatId, 'messages', messageId);
+-    const msgSnap = await getDoc(msgRef);
+-    if (msgSnap.exists()) {
+-      const msg = msgSnap.data() as Message;
+-      const reactions = msg.reactions || {};
+-      const users = reactions[emoji] || [];
+-      
+-      if (users.includes(currentUser.uid)) {
+-        reactions[emoji] = users.filter(id => id !== currentUser.uid);
+-        if (reactions[emoji].length === 0) delete reactions[emoji];
+-      } else {
+-        reactions[emoji] = [...users, currentUser.uid];
++    if (isDemoMode) {
++      await demoService.addReaction(messageId, currentUser.uid, emoji);
++    } else {
++      // Real Firestore logic
++      const msgRef = doc(db, 'chats', chatId, 'messages', messageId);
++      const msgSnap = await getDoc(msgRef);
++      if (msgSnap.exists()) {
++        const msg = msgSnap.data() as Message;
++        const reactions = msg.reactions || {};
++        const users = reactions[emoji] || [];
++        
++        if (users.includes(currentUser.uid)) {
++          reactions[emoji] = users.filter(id => id !== currentUser.uid);
++          if (reactions[emoji].length === 0) delete reactions[emoji];
++        } else {
++          reactions[emoji] = [...users, currentUser.uid];
++        }
++        
++        await updateDoc(msgRef, { reactions });
+       }
+-      
+-      await updateDoc(msgRef, { reactions });
+     }
+   };
+ 
+-  const isUserBlocked = otherUser && localBlockedUsers.includes(otherUser.uid);
++  const isUserBlocked = otherUser && currentUser.blockedUsers?.includes(otherUser.uid);
+   const isBlockedByOther = otherUser && otherUser.blockedUsers?.includes(currentUser.uid);
+-  const isAccessRevoked = otherUser && localOtherUserPerms && !localOtherUserPerms.canChat;
+-  const isMuted = otherUser && localMutedUsers.includes(otherUser.uid);
++  const isAccessRevoked = otherUser && !otherUser.permissions.canChat;
+ 
+   return (
+     <div className={cn(
+@@ -418,8 +333,8 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+             >
+               <div className="flex items-center justify-between mb-10">
+                 <div>
+-                  <h4 className="text-xs font-black uppercase tracking-[0.3em] text-blue-500 mb-1">Options</h4>
+-                  <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Gestion de la discussion</p>
++                  <h4 className="text-xs font-black uppercase tracking-[0.3em] text-blue-500 mb-1">Gestion</h4>
++                  <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Options de discussion</p>
+                 </div>
+                 <button 
+                   onClick={() => setShowMenu(false)}
+@@ -429,39 +344,126 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+                 </button>
+               </div>
+ 
+-              <div className="space-y-3">
+-                <div className="px-4 py-2">
+-                  <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20">Param├¿tres</h5>
+-                </div>
+-
++              {/* Quick Actions Row (Image 3) */}
++              <div className="flex items-center justify-center gap-6 mb-10">
++                <button 
++                  onClick={handleBlockUser}
++                  className={cn(
++                    "h-14 w-14 rounded-2xl flex items-center justify-center transition-all border",
++                    isUserBlocked 
++                      ? "bg-red-500/20 border-red-500/40 text-red-500" 
++                      : "bg-white/5 border-white/5 text-white/40 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-500"
++                  )}
++                >
++                  <Ban size={24} />
++                </button>
++                {currentUser.role === 'admin' && (
++                  <button 
++                    onClick={handleRemoveAccess}
++                    className={cn(
++                      "h-14 w-14 rounded-2xl flex items-center justify-center transition-all border",
++                      isAccessRevoked 
++                        ? "bg-orange-500/20 border-orange-500/40 text-orange-500" 
++                        : "bg-white/5 border-white/5 text-white/40 hover:bg-orange-500/10 hover:border-orange-500/30 hover:text-orange-500"
++                    )}
++                  >
++                    <UserX size={24} />
++                  </button>
++                )}
+                 <button 
+                   onClick={handleToggleMute}
+                   className={cn(
+-                    "w-full flex items-center justify-between p-4 rounded-2xl border transition-all group",
+-                    isMuted
+-                      ? "bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20" 
++                    "h-14 w-14 rounded-2xl flex items-center justify-center transition-all border",
++                    otherUser && currentUser.mutedUsers?.includes(otherUser.uid)
++                      ? "bg-purple-500/20 border-purple-500/40 text-purple-500" 
++                      : "bg-white/5 border-white/5 text-white/40 hover:bg-purple-500/10 hover:border-purple-500/30 hover:text-purple-500"
++                  )}
++                >
++                  {otherUser && currentUser.mutedUsers?.includes(otherUser.uid) ? <BellOff size={24} /> : <Bell size={24} />}
++                </button>
++              </div>
++
++              <div className="px-4 py-2 mb-4">
++                <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20">Param├¿tres</h5>
++              </div>
++
++              <div className="space-y-2 mb-6">
++                <button 
++                  onClick={handleBlockUser}
++                  className={cn(
++                    "w-full flex items-center gap-4 p-4 rounded-2xl border transition-all group",
++                    isUserBlocked 
++                      ? "bg-red-500/10 border-red-500/20" 
+                       : "bg-white/5 border-white/5 hover:bg-white/10"
+                   )}
+                 >
+-                  <div className="flex items-center gap-4">
++                  <div className={cn(
++                    "h-10 w-10 rounded-xl flex items-center justify-center",
++                    isUserBlocked ? "bg-red-500/20 text-red-500" : "bg-white/5 text-white/40"
++                  )}>
++                    <Ban size={20} />
++                  </div>
++                  <span className="font-bold text-sm text-white/80">Bloqu├®</span>
++                </button>
++
++                {currentUser.role === 'admin' && (
++                  <button 
++                    onClick={handleRemoveAccess}
++                    className={cn(
++                      "w-full flex items-center gap-4 p-4 rounded-2xl border transition-all group",
++                      isAccessRevoked 
++                        ? "bg-orange-500/10 border-orange-500/20" 
++                        : "bg-white/5 border-white/5 hover:bg-white/10"
++                    )}
++                  >
+                     <div className={cn(
+-                      "h-12 w-12 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110",
+-                      isMuted ? "bg-purple-500/20 text-purple-400" : "bg-blue-500/10 text-blue-400"
++                      "h-10 w-10 rounded-xl flex items-center justify-center",
++                      isAccessRevoked ? "bg-orange-500/20 text-orange-500" : "bg-white/5 text-white/40"
+                     )}>
+-                      {isMuted ? <BellOff size={24} /> : <Bell size={24} />}
++                      <UserX size={20} />
+                     </div>
+-                    <span className="font-bold text-sm text-white/80">Notification Bloqu├®e</span>
+-                  </div>
++                    <span className="font-bold text-sm text-white/80">Retirer l'acc├¿s</span>
++                  </button>
++                )}
++
++                <button 
++                  onClick={handleToggleMute}
++                  className={cn(
++                    "w-full flex items-center gap-4 p-4 rounded-2xl border transition-all group",
++                    otherUser && currentUser.mutedUsers?.includes(otherUser.uid)
++                      ? "bg-purple-500/10 border-purple-500/20" 
++                      : "bg-white/5 border-white/5 hover:bg-white/10"
++                  )}
++                >
+                   <div className={cn(
+-                    "w-10 h-5 rounded-full relative transition-colors",
+-                    isMuted ? "bg-purple-500" : "bg-white/10"
++                    "h-10 w-10 rounded-xl flex items-center justify-center",
++                    otherUser && currentUser.mutedUsers?.includes(otherUser.uid) ? "bg-purple-500/20 text-purple-400" : "bg-white/5 text-white/40"
+                   )}>
+-                    <motion.div 
+-                      animate={{ x: isMuted ? 20 : 2 }}
+-                      className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
+-                    />
++                    {otherUser && currentUser.mutedUsers?.includes(otherUser.uid) ? <BellOff size={20} /> : <Bell size={20} />}
++                  </div>
++                  <span className="font-bold text-sm text-white/80">Bloc notifications</span>
++                </button>
++
++                <button 
++                  onClick={async () => {
++                    if (confirm('Voulez-vous vraiment effacer l\'historique de cette discussion ?')) {
++                      await demoService.clearChatHistory(chatId);
++                      setShowMenu(false);
++                    }
++                  }}
++                  className="w-full flex items-center gap-4 p-4 rounded-2xl border border-white/5 bg-white/5 hover:bg-red-500/10 hover:border-red-500/20 transition-all group"
++                >
++                  <div className="h-10 w-10 rounded-xl bg-white/5 text-white/40 flex items-center justify-center group-hover:text-red-500 group-hover:bg-red-500/20">
++                    <Trash2 size={20} />
+                   </div>
++                  <span className="font-bold text-sm text-white/80 group-hover:text-red-500">Effacer historique</span>
+                 </button>
++              </div>
++
++              <div className="space-y-3">
++                <div className="px-4 py-2">
++                  <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20">Param├¿tres</h5>
++                </div>
+ 
+                 {currentUser.role === 'admin' && otherUser?.role === 'prestataire' && (
+                   <button 
+@@ -506,55 +508,6 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+                   </div>
+                   <span className="font-bold text-sm text-white/80">Effacer Historique</span>
+                 </button>
+-
+-                <div className="h-px bg-white/5 my-6" />
+-
+-                <button 
+-                  onClick={handleBlockUser}
+-                  className={cn(
+-                    "w-full flex items-center gap-4 p-4 rounded-2xl border transition-all group",
+-                    isUserBlocked 
+-                      ? "bg-blue-500/20 border-blue-500/40 hover:bg-blue-500/30" 
+-                      : "bg-red-500/5 border-white/5 hover:bg-red-500/10 hover:border-red-500/30"
+-                  )}
+-                >
+-                  <div className={cn(
+-                    "h-12 w-12 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110",
+-                    isUserBlocked ? "bg-blue-500/20 text-blue-500" : "bg-red-500/20 text-red-500"
+-                  )}>
+-                    <Ban size={24} />
+-                  </div>
+-                  <span className={cn("font-bold text-sm", isUserBlocked ? "text-blue-500" : "text-red-500")}>
+-                    {isUserBlocked ? "D├®bloquer l'utilisateur" : "Bloquer l'utilisateur"}
+-                  </span>
+-                </button>
+-
+-                {currentUser.role === 'admin' && (
+-                  <button 
+-                    onClick={handleRemoveAccess}
+-                    className={cn(
+-                      "w-full flex items-center gap-4 p-4 rounded-2xl border transition-all group",
+-                      isAccessRevoked
+-                        ? "bg-orange-500/20 border-orange-500/40 hover:bg-orange-500/30"
+-                        : "bg-red-600/10 border-white/5 hover:bg-red-600/20 hover:border-red-600/40"
+-                    )}
+-                  >
+-                    <div className={cn(
+-                      "h-12 w-12 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110",
+-                      isAccessRevoked ? "bg-orange-500/20 text-orange-600" : "bg-red-600/20 text-red-600"
+-                    )}>
+-                      <UserX size={24} />
+-                    </div>
+-                    <div className="text-left">
+-                      <p className={cn("font-bold text-sm", isAccessRevoked ? "text-orange-600" : "text-red-600")}>
+-                        {isAccessRevoked ? "R├®tablir l'acc├¿s" : "Retirer l'acc├¿s"}
+-                      </p>
+-                      <p className={cn("text-[10px] font-bold uppercase", isAccessRevoked ? "text-orange-600/60" : "text-red-600/60")}>
+-                        {isAccessRevoked ? "Acc├¿s au Tchatche r├®tabli" : "Plus d'acc├¿s au Tchatche"}
+-                      </p>
+-                    </div>
+-                  </button>
+-                )}
+               </div>
+             </motion.div>
+           </>
+@@ -570,14 +523,14 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+           <button 
+             onClick={onBack} 
+             className={cn(
+-              "h-11 w-11 rounded-xl transition-all border border-white/10 flex items-center justify-center", 
+-              isMiniChat ? "text-white/60 hover:text-blue-500 hover:border-blue-500/50 hover:bg-blue-500/5" : "hover:bg-gray-100"
++              "h-11 w-11 rounded-xl transition-all border border-white/10 flex items-center justify-center bg-black", 
++              isMiniChat ? "text-[#15bcd7] hover:text-blue-500 hover:border-blue-500/50 hover:bg-blue-500/5" : "hover:bg-gray-100 text-[#15bcd7]"
+             )}
+           >
+             <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="currentColor">
+-              <rect x="4" y="4" width="24" height="24" rx="6" stroke="currentColor" strokeWidth="2" />
++              <rect x="4" y="4" width="24" height="24" rx="6" stroke="#53a6da" strokeWidth="2" />
+               <line x1="12" y1="4" x2="12" y2="28" stroke="currentColor" strokeWidth="2" />
+-              <path d="M22 11L17 16L22 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
++              <path d="M22 11L17 16L22 21" stroke="#15bcd7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+               <line x1="6" y1="10" x2="10" y2="6" stroke="currentColor" strokeWidth="1" opacity="0.4" />
+               <line x1="6" y1="16" x2="10" y2="12" stroke="currentColor" strokeWidth="1" opacity="0.4" />
+               <line x1="6" y1="22" x2="10" y2="18" stroke="currentColor" strokeWidth="1" opacity="0.4" />
+@@ -629,7 +582,7 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+                   <span className="text-[8px] font-black uppercase text-orange-500 tracking-wider">Acc├¿s Retir├®</span>
+                 </div>
+               )}
+-              {otherUser && isMuted && (
++              {otherUser && currentUser.mutedUsers?.includes(otherUser.uid) && (
+                 <div className="flex items-center gap-1 px-2 py-0.5 bg-purple-500/10 border border-purple-500/20 rounded-full">
+                   <BellOff size={10} className="text-purple-500" />
+                   <span className="text-[8px] font-black uppercase text-purple-500 tracking-wider">Notif. Bloqu├®es</span>
+@@ -643,61 +596,46 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+         </div>
+ 
+         <div className="flex items-center gap-2">
+-          {currentUser.role === 'admin' && otherUser && (
++          {currentUser.role === 'admin' && otherUser && !isMiniChat && (
+             <div className="hidden md:flex items-center gap-1 mr-2">
+               {/* Block Toggle */}
+-              <div className="relative group/tooltip">
+-                <button 
+-                  onClick={handleBlockUser}
+-                  className={cn(
+-                    "h-10 w-10 rounded-xl transition-all flex items-center justify-center",
+-                    isUserBlocked 
+-                      ? "bg-red-500/20 text-red-500" 
+-                      : "text-gray-400 hover:bg-red-500/10 hover:text-red-500"
+-                  )}
+-                >
+-                  <Ban size={20} />
+-                </button>
+-                <div className="absolute top-full right-0 mt-2 px-3 py-1.5 bg-black text-white text-[10px] font-bold rounded-lg opacity-0 group-hover/tooltip:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-[100] shadow-xl border border-white/10">
+-                  {isUserBlocked ? "D├®bloquer" : "Bloquer"}
+-                </div>
+-              </div>
++              <button 
++                onClick={handleBlockUser}
++                className={cn(
++                  "h-10 w-10 rounded-xl transition-all flex items-center justify-center",
++                  isUserBlocked 
++                    ? "bg-red-500/20 text-red-500" 
++                    : "text-gray-400 hover:bg-red-500/10 hover:text-red-500"
++                )}
++              >
++                <Ban size={20} />
++              </button>
+ 
+               {/* Access Toggle */}
+-              <div className="relative group/tooltip">
+-                <button 
+-                  onClick={handleRemoveAccess}
+-                  className={cn(
+-                    "h-10 w-10 rounded-xl transition-all flex items-center justify-center",
+-                    isAccessRevoked 
+-                      ? "bg-orange-500/20 text-orange-500" 
+-                      : "text-gray-400 hover:bg-orange-500/10 hover:text-orange-500"
+-                  )}
+-                >
+-                  <UserX size={20} />
+-                </button>
+-                <div className="absolute top-full right-0 mt-2 px-3 py-1.5 bg-black text-white text-[10px] font-bold rounded-lg opacity-0 group-hover/tooltip:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-[100] shadow-xl border border-white/10">
+-                  {isAccessRevoked ? "R├®tablir l'acc├¿s" : "Retirer l'acc├¿s"}
+-                </div>
+-              </div>
++              <button 
++                onClick={handleRemoveAccess}
++                className={cn(
++                  "h-10 w-10 rounded-xl transition-all flex items-center justify-center",
++                  isAccessRevoked 
++                    ? "bg-orange-500/20 text-orange-500" 
++                    : "text-gray-400 hover:bg-orange-500/10 hover:text-orange-500"
++                )}
++              >
++                <UserX size={20} />
++              </button>
+ 
+               {/* Mute Toggle */}
+-              <div className="relative group/tooltip">
+-                <button 
+-                  onClick={handleToggleMute}
+-                  className={cn(
+-                    "h-10 w-10 rounded-xl transition-all flex items-center justify-center",
+-                    isMuted
+-                      ? "bg-purple-500/20 text-purple-500" 
+-                      : "text-gray-400 hover:bg-purple-500/10 hover:text-purple-500"
+-                  )}
+-                >
+-                  {isMuted ? <BellOff size={20} /> : <Bell size={20} />}
+-                </button>
+-                <div className="absolute top-full right-0 mt-2 px-3 py-1.5 bg-black text-white text-[10px] font-bold rounded-lg opacity-0 group-hover/tooltip:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-[100] shadow-xl border border-white/10">
+-                  {isMuted ? "R├®tablir notifications" : "Bloquer notifications"}
+-                </div>
+-              </div>
++              <button 
++                onClick={handleToggleMute}
++                className={cn(
++                  "h-10 w-10 rounded-xl transition-all flex items-center justify-center",
++                  otherUser && currentUser.mutedUsers?.includes(otherUser.uid)
++                    ? "bg-purple-500/20 text-purple-500" 
++                    : "text-gray-400 hover:bg-purple-500/10 hover:text-purple-500"
++                )}
++              >
++                {otherUser && currentUser.mutedUsers?.includes(otherUser.uid) ? <BellOff size={20} /> : <Bell size={20} />}
++              </button>
+             </div>
+           )}
+           {currentUser.role === 'admin' && (
+@@ -830,10 +768,10 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+                   type="button"
+                   onClick={() => fileInputRef.current?.click()}
+                   disabled={isUploading || isRecording}
+-                  className="h-11 w-11 rounded-full border border-white/10 flex items-center justify-center text-white/40 hover:text-blue-500 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all disabled:opacity-50 flex-shrink-0"
++                  className="h-11 w-11 rounded-full border border-white/10 flex items-center justify-center text-[#15bcd7] hover:bg-blue-500/5 transition-all disabled:opacity-50 flex-shrink-0"
+                 >
+                   {isUploading ? (
+-                    <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
++                    <div className="h-5 w-5 border-2 border-[#15bcd7] border-t-transparent rounded-full animate-spin" />
+                   ) : (
+                     <Paperclip size={20} />
+                   )}
+@@ -874,7 +812,7 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+                     "h-11 w-11 rounded-full flex items-center justify-center transition-all flex-shrink-0 border border-white/10",
+                     isRecording 
+                       ? "bg-red-500 text-white animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.4)] border-red-400/50" 
+-                      : "text-white/40 hover:text-blue-500 hover:border-blue-500/50 hover:bg-blue-500/5"
++                      : "text-[#15bcd7] hover:bg-blue-500/5"
+                   )}
+                 >
+                   {isRecording ? <StopCircle size={20} /> : <Mic size={20} />}
+@@ -885,36 +823,21 @@ export default function ChatWindow({ chatId, onBack, currentUser, onShowAdmin, o
+                 onClick={() => sendMessage()}
+                 disabled={(!inputText.trim() && !isRecording) || isUploading}
+                 className={cn(
+-                  "h-14 w-14 rounded-full flex items-center justify-center transition-all shadow-[0_10px_30px_rgba(0,0,0,0.3)] active:scale-90 border border-white/10",
++                  "h-11 w-11 rounded-full flex items-center justify-center transition-all shadow-[0_10px_30px_rgba(0,0,0,0.3)] active:scale-90 border border-white/10",
+                   (inputText.trim() || isRecording) 
+-                    ? "bg-black text-white hover:scale-105" 
+-                    : "bg-black text-white/20 cursor-not-allowed"
++                    ? "bg-[#0078ff] text-white hover:scale-105" 
++                    : "bg-black text-[#15bcd7] hover:bg-gray-900 cursor-pointer"
+                 )}
+               >
+-                <motion.div 
+-                  initial={{ scale: 0, opacity: 0 }}
+-                  animate={{ scale: 1, opacity: 1 }}
+-                  whileHover={{ scale: 1.1 }}
+-                  whileTap={{ scale: 0.9 }}
+-                  className="relative"
+-                >
+-                  <svg 
+-                    viewBox="0 0 24 24" 
+-                    className="w-8 h-8 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]"
+-                    xmlns="http://www.w3.org/2000/svg"
+-                  >
+-                    {/* Top Half (White) */}
+-                    <path 
+-                      d="M22 12L3 3L6.5 12L22 12Z" 
+-                      fill={(inputText.trim() || isRecording) ? "white" : "rgba(255,255,255,0.2)"} 
+-                    />
+-                    {/* Bottom Half (Grey Accent) */}
+-                    <path 
+-                      d="M22 12L6.5 12L3 21L22 12Z" 
+-                      fill={(inputText.trim() || isRecording) ? "#d1d5db" : "rgba(255,255,255,0.1)"} 
+-                    />
+-                  </svg>
+-                </motion.div>
++                <div className="relative">
++                  <Mail 
++                    size={22} 
++                    className={cn(
++                      "drop-shadow-[0_2px_4px_rgba(0,0,0,0.1)] transition-colors",
++                      (inputText.trim() || isRecording) ? "text-white" : "text-[#15bcd7]"
++                    )}
++                  />
++                </div>
+               </button>
+             </div>
+           </>
+diff --git a/Messages/src/components/chat/ContactList.tsx b/a/src/components/chat/ContactList.tsx
+index c611debc..02b28bce 100644
+--- a/Messages/src/components/chat/ContactList.tsx
++++ b/a/src/components/chat/ContactList.tsx
+@@ -3,8 +3,7 @@ import { Search, User, Shield, MessageSquare, MoreVertical, Ban, BellOff, Trash2
+ import { UserProfile } from '../../types';
+ import { cn } from '../../lib/utils';
+ import { motion, AnimatePresence } from 'motion/react';
+-import { getDb } from '../../firebase';
+-import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
++import { demoService } from '../../demo-service';
+ 
+ interface ContactListProps {
+   users: UserProfile[];
+@@ -16,6 +15,7 @@ interface ContactListProps {
+   selectedUsers?: string[];
+   onSelectedUsersChange?: (userIds: string[]) => void;
+   activeChatId?: string | null;
++  buttonPos?: { x: number, y: number };
+ }
+ 
+ export default function ContactList({ 
+@@ -27,7 +27,8 @@ export default function ContactList({
+   onToggleCollapse,
+   selectedUsers = [],
+   onSelectedUsersChange,
+-  activeChatId
++  activeChatId,
++  buttonPos
+ }: ContactListProps) {
+   const [searchQuery, setSearchQuery] = useState('');
+   const [contextMenuUser, setContextMenuUser] = useState<string | null>(null);
+@@ -82,8 +83,8 @@ export default function ContactList({
+ 
+   const roleOrder = ['admin', 'prestataire', 'commercial', 'autre'];
+ 
+-  const toggleSelect = (userId: string, e?: React.MouseEvent) => {
+-    if (e && e.stopPropagation) e.stopPropagation();
++  const toggleSelect = (userId: string, e: React.MouseEvent) => {
++    e.stopPropagation();
+     if (!onSelectedUsersChange) return;
+     onSelectedUsersChange(
+       selectedUsers.includes(userId) ? selectedUsers.filter(id => id !== userId) : [...selectedUsers, userId]
+@@ -91,111 +92,68 @@ export default function ContactList({
+   };
+ 
+   const handleAction = async (action: string, userId: string) => {
+-    if (!userId || userId.trim() === '') {
+-      console.error('Invalid userId:', userId);
+-      return;
+-    }
+-    const userRef = doc(getDb(), 'users', userId);
+-    const currentUserRef = doc(getDb(), 'users', currentUser.uid);
+-    const target = users.find(u => u.uid === userId);
+-
+     if (action === 'block') {
+-      const isBlocked = currentUser.blockedUsers?.includes(userId);
+-      await updateDoc(currentUserRef, {
+-        blockedUsers: isBlocked ? arrayRemove(userId) : arrayUnion(userId)
+-      });
++      await demoService.blockUser(userId);
+     } else if (action === 'revoke') {
++      const target = users.find(u => u.uid === userId);
+       if (target) {
+-        const currentCanChat = target.permissions?.canChat !== false; // Default to true
+-        const newPermissions = { ...(target.permissions || {}), canChat: !currentCanChat };
+-        await updateDoc(userRef, { permissions: newPermissions });
++        target.permissions.canChat = !target.permissions.canChat;
++        await demoService.updateUserField(userId, 'permissions', target.permissions);
+       }
+     } else if (action === 'identification') {
++      const target = users.find(u => u.uid === userId);
+       if (target) {
+-        await updateDoc(userRef, {
+-          identificationBlocked: !target.identificationBlocked
+-        });
++        target.identificationBlocked = !target.identificationBlocked;
++        await demoService.updateUserField(userId, 'identificationBlocked', target.identificationBlocked);
+       }
+     } else if (action === 'adminOnly') {
++      const target = users.find(u => u.uid === userId);
+       if (target) {
+-        await updateDoc(userRef, {
+-          adminOnly: !target.adminOnly
+-        });
++        const newValue = !target.adminOnly;
++        await demoService.updateUserField(userId, 'adminOnly', newValue);
+       }
+     } else if (action === 'isolation') {
+-      if (target) {
+-        await updateDoc(userRef, {
+-          isIsolated: !target.isIsolated
+-        });
+-      }
++      await demoService.toggleIsolation(userId);
+     } else if (action === 'notifications') {
++      const target = users.find(u => u.uid === userId);
+       if (target) {
+-        await updateDoc(userRef, {
+-          notificationsBlocked: !target.notificationsBlocked
+-        });
++        target.notificationsBlocked = !target.notificationsBlocked;
++        await demoService.updateUserField(userId, 'notificationsBlocked', target.notificationsBlocked);
+       }
+     } else if (action === 'clear_restrictions') {
+-      try {
+-        await updateDoc(userRef, {
+-          restrictedContacts: [],
+-          exclusionMetadata: {}
+-        });
+-      } catch (error) {
+-        console.error('Error clearing restrictions:', error);
++      const target = users.find(u => u.uid === userId);
++      if (target && target.restrictedContacts) {
++        const contacts = [...target.restrictedContacts];
++        for (const otherId of contacts) {
++          await demoService.toggleRestrictContact(userId, otherId);
++        }
+       }
+     } else if (action === 'pairwise_isolation') {
+-      console.log('Pairwise isolation - selected users:', selectedUsers);
+-      if (!selectedUsers || selectedUsers.length < 2) {
+-        console.error('Need at least 2 users to isolate. Current:', selectedUsers?.length);
+-        return;
+-      }
+-      try {
+-        // Isolate all selected users from each other
+-        for (const uid1 of selectedUsers) {
+-          if (!uid1 || uid1.trim() === '') {
+-            console.error('Invalid uid in selectedUsers:', uid1);
+-            continue;
+-          }
+-          const others = selectedUsers.filter(uid2 => uid2 !== uid1 && uid2);
+-          console.log(`Isolating ${uid1} from:`, others);
+-          if (others.length > 0) {
+-            await updateDoc(doc(getDb(), 'users', uid1), {
+-              restrictedContacts: arrayUnion(...others)
+-            });
+-          }
++      if (selectedUsers.length < 2) return;
++      // Isolate all selected users from each other (pairwise)
++      for (let i = 0; i < selectedUsers.length; i++) {
++        for (let j = i + 1; j < selectedUsers.length; j++) {
++          await demoService.toggleRestrictContact(selectedUsers[i], selectedUsers[j]);
+         }
+-        onSelectedUsersChange?.([]);
+-        console.log('Pairwise isolation completed');
+-      } catch (error) {
+-        console.error('Error pairwise isolation:', error);
+       }
++      onSelectedUsersChange?.([]);
+     } else if (action === 'annoying') {
++      const target = users.find(u => u.uid === userId);
+       if (target) {
+-        await updateDoc(userRef, {
+-          isAnnoying: !target.isAnnoying
+-        });
++        await demoService.updateUserField(userId, 'isAnnoying', !target.isAnnoying);
+       }
+     } else if (action === 'discussion') {
++      const target = users.find(u => u.uid === userId);
+       if (target) {
+-        await updateDoc(userRef, {
+-          isInDiscussion: !target.isInDiscussion
+-        });
++        await demoService.updateUserField(userId, 'isInDiscussion', !target.isInDiscussion);
+       }
+     }
+     setContextMenuUser(null);
+   };
+ 
+   const updateExclusionMetadata = async (targetId: string, metadata: { reason?: string, isPublic?: boolean }) => {
+-    if (!selectedExclusionUserId || !targetId) return;
+-    try {
+-      const userRef = doc(getDb(), 'users', selectedExclusionUserId);
+-      const currentMetadata = selectedExclusionUser?.exclusionMetadata?.[targetId] || {};
+-      await updateDoc(userRef, {
+-        [`exclusionMetadata.${targetId}`]: { ...currentMetadata, ...metadata, date: new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) }
+-      });
+-    } catch (error) {
+-      console.error('Error updating exclusion metadata:', error);
+-    }
++    if (!selectedExclusionUserId) return;
++    await demoService.updateExclusionMetadata(selectedExclusionUserId, targetId, metadata);
+   };
+ 
+   return (
+@@ -407,9 +365,9 @@ export default function ContactList({
+                                         e.stopPropagation();
+                                         setSelectedExclusionUserId(user.uid);
+                                       }}
+-                                      className="flex items-center gap-1 px-1.5 py-0.5 bg-orange-500/10 border border-orange-500/20 rounded-full hover:bg-orange-500/20 transition-colors"
++                                      className="flex items-center gap-1 px-1.5 py-0.5 bg-black border border-[#a51a1a] rounded-full hover:bg-red-900/20 transition-colors"
+                                     >
+-                                      <Link2Off size={8} className="text-orange-500" />
++                                      <Link2Off size={8} className="text-[#15bcd7] [&>path]:text-[#15bcd7] [&>path]:stroke-[#1b8f1b]" />
+                                       <span className="text-[7px] font-black uppercase text-orange-500 tracking-wider">
+                                         {user.restrictedContacts.length} Exclu(s)
+                                       </span>
+@@ -535,235 +493,238 @@ export default function ContactList({
+         )}
+       </div>
+ 
+-      {/* Exclusion Detail Side Panel */}
++      {/* Exclusion Detail Side Panel (Pill Style - Same as Mini Chat) */}
+       <AnimatePresence>
+-        {selectedExclusionUser && (
++        {selectedExclusionUser && buttonPos && (
+           <>
+             <motion.div 
+               initial={{ opacity: 0 }}
+               animate={{ opacity: 1 }}
+               exit={{ opacity: 0 }}
+               onClick={() => setSelectedExclusionUserId(null)}
+-              className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200]"
++              className="fixed inset-0 bg-black/60 backdrop-blur-md z-[200]"
+             />
+-            <motion.div
+-              initial={{ x: '100%' }}
+-              animate={{ x: 0 }}
+-              exit={{ x: '100%' }}
+-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+-              className="fixed right-0 top-0 h-full w-80 bg-[#0f1113] border-l border-white/10 shadow-2xl z-[210] flex flex-col"
++            <div 
++              className="fixed inset-y-0 right-0 z-[210] pointer-events-none flex flex-col items-end"
+             >
+-              <div className="p-6 border-b border-white/5 flex items-center justify-between">
+-                <div>
+-                  <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500 mb-1">Options</h2>
+-                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Gestion de la discussion</p>
++              <motion.div
++                initial={{ x: '100%', opacity: 0 }}
++                animate={{ x: 0, opacity: 1 }}
++                exit={{ x: '100%', opacity: 0 }}
++                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
++                className="w-[360px] h-full bg-[#0a0b0d] shadow-[-20px_0_80px_rgba(0,0,0,0.9)] border-l border-[#0078ff]/30 flex flex-col overflow-hidden pointer-events-auto"
++              >
++                <div className="p-8 border-b border-white/5 flex items-center justify-between flex-shrink-0 bg-black/40 backdrop-blur-md">
++                  <div>
++                    <h2 className="text-2xl font-black text-white mb-1">Menu Exclu(s)</h2>
++                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em]">D├®tails des restrictions</p>
++                  </div>
++                  <button 
++                    onClick={() => setSelectedExclusionUserId(null)}
++                    className="h-12 w-12 rounded-2xl bg-white/5 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-all"
++                  >
++                    <X size={24} />
++                  </button>
+                 </div>
+-                <button 
+-                  onClick={() => setSelectedExclusionUserId(null)}
+-                  className="h-10 w-10 rounded-full bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+-                >
+-                  <X size={20} />
+-                </button>
+-              </div>
+ 
+-              <div className="flex-1 overflow-y-auto p-6 space-y-8">
+-                <section>
+-                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-4">Param├¿tres</h3>
+-                  <div className="space-y-3">
+-                    <div className="flex items-center gap-4 p-4 bg-white/5 rounded-2xl border border-white/5">
+-                      <div className="relative">
+-                        <img src={selectedExclusionUser.photoURL} alt="" className="h-12 w-12 rounded-full object-cover border-2 border-orange-500" />
+-                        <div className="absolute -bottom-1 -right-1 h-4 w-4 bg-orange-500 rounded-full border-2 border-[#0f1113] flex items-center justify-center">
+-                          <Link2Off size={8} className="text-white" />
++                <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
++                  <section>
++                    <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-4">Param├¿tres</h3>
++                    <div className="space-y-3">
++                      <div className="flex items-center gap-4 p-4 bg-white/5 rounded-2xl border border-white/5">
++                        <div className="relative">
++                          <img src={selectedExclusionUser.photoURL} alt="" className="h-12 w-12 rounded-full object-cover border-2 border-orange-500" />
++                          <div className="absolute -bottom-1 -right-1 h-4 w-4 bg-orange-500 rounded-full border-2 border-[#0f1113] flex items-center justify-center">
++                            <Link2Off size={8} className="text-white" />
++                          </div>
++                        </div>
++                        <div>
++                          <p className="text-sm font-bold text-white">{selectedExclusionUser.displayName}</p>
++                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{selectedExclusionUser.role}</p>
+                         </div>
+                       </div>
+-                      <div>
+-                        <p className="text-sm font-bold text-white">{selectedExclusionUser.displayName}</p>
+-                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{selectedExclusionUser.role}</p>
+-                      </div>
+-                    </div>
+ 
+-                    {/* Toggles from Image 5 */}
+-                    <div className="grid grid-cols-1 gap-3">
+-                      <div className="flex items-center justify-between p-4 bg-[#2a1a12] border border-orange-500/20 rounded-2xl">
+-                        <div className="flex items-center gap-3">
+-                          <div className="h-10 w-10 rounded-xl bg-orange-500/20 flex items-center justify-center text-orange-500">
+-                            <BellOff size={18} />
+-                          </div>
+-                          <div>
+-                            <p className="text-[10px] font-black text-white uppercase tracking-wider">Mode Silencieux</p>
+-                            <p className="text-[8px] text-orange-500/60 font-bold uppercase tracking-widest">D├®sactiver alertes</p>
++                      {/* Toggles */}
++                      <div className="grid grid-cols-1 gap-3">
++                        <div className="flex items-center justify-between p-4 bg-[#2a1a12] border border-orange-500/20 rounded-2xl">
++                          <div className="flex items-center gap-3">
++                            <div className="h-10 w-10 rounded-xl bg-orange-500/20 flex items-center justify-center text-orange-500">
++                              <BellOff size={18} />
++                            </div>
++                            <div>
++                              <p className="text-[10px] font-black text-white uppercase tracking-wider">Mode Silencieux</p>
++                              <p className="text-[8px] text-orange-500/60 font-bold uppercase tracking-widest">D├®sactiver alertes</p>
++                            </div>
+                           </div>
++                          <button 
++                            onClick={() => handleAction('identification', selectedExclusionUser.uid)}
++                            className={cn(
++                              "w-10 h-5 rounded-full relative transition-colors",
++                              selectedExclusionUser.identificationBlocked ? "bg-orange-500" : "bg-white/10"
++                            )}
++                          >
++                            <div className={cn(
++                              "absolute top-1 w-3 h-3 rounded-full bg-white transition-all",
++                              selectedExclusionUser.identificationBlocked ? "right-1" : "left-1"
++                            )} />
++                          </button>
+                         </div>
+-                        <button 
+-                          onClick={() => handleAction('identification', selectedExclusionUser.uid)}
+-                          className={cn(
+-                            "w-10 h-5 rounded-full relative transition-colors",
+-                            selectedExclusionUser.identificationBlocked ? "bg-orange-500" : "bg-white/10"
+-                          )}
+-                        >
+-                          <div className={cn(
+-                            "absolute top-1 w-3 h-3 rounded-full bg-white transition-all",
+-                            selectedExclusionUser.identificationBlocked ? "right-1" : "left-1"
+-                          )} />
+-                        </button>
+-                      </div>
+ 
+-                      <div className="flex items-center justify-between p-4 bg-[#1a122a] border border-purple-500/20 rounded-2xl">
+-                        <div className="flex items-center gap-3">
+-                          <div className="h-10 w-10 rounded-xl bg-purple-500/20 flex items-center justify-center text-purple-500">
+-                            <Shield size={18} />
+-                          </div>
+-                          <div>
+-                            <p className="text-[10px] font-black text-white uppercase tracking-wider">Notification Bloqu├®e</p>
+-                            <p className="text-[8px] text-purple-500/60 font-bold uppercase tracking-widest">S├®curit├® active</p>
++                        <div className="flex items-center justify-between p-4 bg-[#1a122a] border border-purple-500/20 rounded-2xl">
++                          <div className="flex items-center gap-3">
++                            <div className="h-10 w-10 rounded-xl bg-purple-500/20 flex items-center justify-center text-purple-500">
++                              <Shield size={18} />
++                            </div>
++                            <div>
++                              <p className="text-[10px] font-black text-white uppercase tracking-wider">Notification Bloqu├®e</p>
++                              <p className="text-[8px] text-purple-500/60 font-bold uppercase tracking-widest">S├®curit├® active</p>
++                            </div>
+                           </div>
++                          <button 
++                            onClick={() => handleAction('notifications', selectedExclusionUser.uid)}
++                            className={cn(
++                              "w-10 h-5 rounded-full relative transition-colors",
++                              selectedExclusionUser.notificationsBlocked ? "bg-purple-500" : "bg-white/10"
++                            )}
++                          >
++                            <div className={cn(
++                              "absolute top-1 w-3 h-3 rounded-full bg-white transition-all",
++                              selectedExclusionUser.notificationsBlocked ? "right-1" : "left-1"
++                            )} />
++                          </button>
+                         </div>
+-                        <button 
+-                          onClick={() => handleAction('notifications', selectedExclusionUser.uid)}
+-                          className={cn(
+-                            "w-10 h-5 rounded-full relative transition-colors",
+-                            selectedExclusionUser.notificationsBlocked ? "bg-purple-500" : "bg-white/10"
+-                          )}
+-                        >
+-                          <div className={cn(
+-                            "absolute top-1 w-3 h-3 rounded-full bg-white transition-all",
+-                            selectedExclusionUser.notificationsBlocked ? "right-1" : "left-1"
+-                          )} />
+-                        </button>
+                       </div>
+                     </div>
+-                  </div>
+-                </section>
++                  </section>
+ 
+-                <section>
+-                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-4">Liste des exclusions</h3>
+-                  <div className="space-y-4">
+-                    {selectedExclusionUser.restrictedContacts?.map(id => {
+-                      const excludedUser = users.find(u => u.uid === id);
+-                      const metadata = selectedExclusionUser.exclusionMetadata?.[id];
+-                      const isEditing = editingReasonId === id;
+-                      
+-                      return (
+-                        <div key={id} className="bg-white/5 rounded-2xl border border-white/5 overflow-hidden group/item">
+-                          <div className="p-4 flex items-center gap-3 border-b border-white/5">
+-                            <img src={excludedUser?.photoURL} alt="" className="h-10 w-10 rounded-full object-cover" />
+-                            <div className="flex-1">
+-                              <p className="text-xs font-bold text-white">{excludedUser?.displayName}</p>
+-                              <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{excludedUser?.role}</p>
+-                            </div>
+-                            <div className="flex items-center gap-2">
+-                              <span className={cn(
+-                                "text-[7px] font-black uppercase tracking-widest",
+-                                metadata?.isPublic ? "text-blue-500" : "text-gray-600"
+-                              )}>
+-                                {metadata?.isPublic ? "Public" : "Priv├®"}
+-                              </span>
+-                              <button 
+-                                onClick={() => updateExclusionMetadata(id, { isPublic: !metadata?.isPublic })}
+-                                className={cn(
+-                                  "h-8 w-8 rounded-full flex items-center justify-center transition-all",
+-                                  metadata?.isPublic ? "bg-blue-500/10 text-blue-500" : "bg-white/5 text-gray-500 hover:text-white"
+-                                )}
+-                                title={metadata?.isPublic ? "Raison publique" : "Raison priv├®e"}
+-                              >
+-                                {metadata?.isPublic ? <Eye size={14} /> : <EyeOff size={14} />}
+-                              </button>
+-                            </div>
+-                          </div>
+-                          
+-                          <div className="p-4 space-y-4">
+-                            <div className="flex items-center gap-3">
+-                              <div className="h-8 w-8 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500">
+-                                <Calendar size={14} />
+-                              </div>
++                  <section>
++                    <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-4">Liste des exclusions</h3>
++                    <div className="space-y-4">
++                      {selectedExclusionUser.restrictedContacts?.map(id => {
++                        const excludedUser = users.find(u => u.uid === id);
++                        const metadata = selectedExclusionUser.exclusionMetadata?.[id];
++                        const isEditing = editingReasonId === id;
++                        
++                        return (
++                          <div key={id} className="bg-white/5 rounded-2xl border border-white/5 overflow-hidden group/item">
++                            <div className="p-4 flex items-center gap-3 border-b border-white/5">
++                              <img src={excludedUser?.photoURL} alt="" className="h-10 w-10 rounded-full object-cover" />
+                               <div className="flex-1">
+-                                <p className="text-[8px] font-black uppercase text-gray-600 tracking-widest mb-0.5">Date d'exclusion</p>
+-                                <p className="text-[10px] font-bold text-gray-300">{metadata?.date || '06 Avril 2026'}</p>
++                                <p className="text-xs font-bold text-white">{excludedUser?.displayName}</p>
++                                <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{excludedUser?.role}</p>
++                              </div>
++                              <div className="flex items-center gap-2">
++                                <span className={cn(
++                                  "text-[7px] font-black uppercase tracking-widest",
++                                  metadata?.isPublic ? "text-blue-500" : "text-gray-600"
++                                )}>
++                                  {metadata?.isPublic ? "Public" : "Priv├®"}
++                                </span>
++                                <button 
++                                  onClick={() => updateExclusionMetadata(id, { isPublic: !metadata?.isPublic })}
++                                  className={cn(
++                                    "h-8 w-8 rounded-full flex items-center justify-center transition-all",
++                                    metadata?.isPublic ? "bg-blue-500/10 text-blue-500" : "bg-white/5 text-gray-500 hover:text-white"
++                                  )}
++                                >
++                                  {metadata?.isPublic ? <Eye size={14} /> : <EyeOff size={14} />}
++                                </button>
+                               </div>
+                             </div>
+-
+-                            <div className="flex items-start gap-3">
+-                              <div className="h-8 w-8 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-500 mt-0.5">
+-                                <Info size={14} />
++                            
++                            <div className="p-4 space-y-4">
++                              <div className="flex items-center gap-3">
++                                <div className="h-8 w-8 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500">
++                                  <Calendar size={14} />
++                                </div>
++                                <div className="flex-1">
++                                  <p className="text-[8px] font-black uppercase text-gray-600 tracking-widest mb-0.5">Date d'exclusion</p>
++                                  <p className="text-[10px] font-bold text-gray-300">{metadata?.date || '06 Avril 2026'}</p>
++                                </div>
+                               </div>
+-                              <div className="flex-1 relative">
+-                                <div className="flex items-center justify-between mb-0.5">
+-                                  <p className="text-[8px] font-black uppercase text-gray-600 tracking-widest">Raison</p>
+-                                  {!isEditing && (
+-                                    <button 
+-                                      onClick={() => {
+-                                        setEditingReasonId(id);
+-                                        setTempReason(metadata?.reason || '');
+-                                      }}
+-                                      className="text-gray-500 hover:text-white transition-colors"
+-                                    >
+-                                      <Edit3 size={10} />
+-                                    </button>
+-                                  )}
++
++                              <div className="flex items-start gap-3">
++                                <div className="h-8 w-8 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-500 mt-0.5">
++                                  <Info size={14} />
+                                 </div>
+-                                
+-                                {isEditing ? (
+-                                  <div className="space-y-2">
+-                                    <textarea
+-                                      autoFocus
+-                                      value={tempReason}
+-                                      onChange={(e) => setTempReason(e.target.value)}
+-                                      className="w-full bg-white/5 border border-white/10 rounded-lg p-2 text-[10px] text-white focus:outline-none focus:border-blue-500/50 min-h-[60px] resize-none"
+-                                    />
+-                                    <div className="flex justify-end gap-2">
+-                                      <button 
+-                                        onClick={() => setEditingReasonId(null)}
+-                                        className="px-2 py-1 text-[8px] font-black uppercase text-gray-500 hover:text-white"
+-                                      >
+-                                        Annuler
+-                                      </button>
++                                <div className="flex-1 relative">
++                                  <div className="flex items-center justify-between mb-0.5">
++                                    <p className="text-[8px] font-black uppercase text-gray-600 tracking-widest">Raison</p>
++                                    {!isEditing && (
+                                       <button 
+                                         onClick={() => {
+-                                          updateExclusionMetadata(id, { reason: tempReason });
+-                                          setEditingReasonId(null);
++                                          setEditingReasonId(id);
++                                          setTempReason(metadata?.reason || '');
+                                         }}
+-                                        className="px-2 py-1 bg-blue-500 rounded text-[8px] font-black uppercase text-white"
++                                        className="text-gray-500 hover:text-white transition-colors"
+                                       >
+-                                        Sauver
++                                        <Edit3 size={10} />
+                                       </button>
+-                                    </div>
++                                    )}
+                                   </div>
+-                                ) : (
+-                                  <p className="text-[10px] font-bold text-gray-300 leading-relaxed">
+-                                    {metadata?.reason || 'Isolation de s├®curit├® entre commerciaux du m├¬me secteur.'}
+-                                  </p>
+-                                )}
++                                  
++                                  {isEditing ? (
++                                    <div className="space-y-2">
++                                      <textarea
++                                        autoFocus
++                                        value={tempReason}
++                                        onChange={(e) => setTempReason(e.target.value)}
++                                        className="w-full bg-white/5 border border-white/10 rounded-lg p-2 text-[10px] text-white focus:outline-none focus:border-blue-500/50 min-h-[60px] resize-none"
++                                      />
++                                      <div className="flex justify-end gap-2">
++                                        <button 
++                                          onClick={() => setEditingReasonId(null)}
++                                          className="px-2 py-1 text-[8px] font-black uppercase text-gray-500 hover:text-white"
++                                        >
++                                          Annuler
++                                        </button>
++                                        <button 
++                                          onClick={() => {
++                                            updateExclusionMetadata(id, { reason: tempReason });
++                                            setEditingReasonId(null);
++                                          }}
++                                          className="px-2 py-1 bg-blue-500 rounded text-[8px] font-black uppercase text-white"
++                                        >
++                                          Sauver
++                                        </button>
++                                      </div>
++                                    </div>
++                                  ) : (
++                                    <p className="text-[10px] font-bold text-gray-300 leading-relaxed">
++                                      {metadata?.reason || 'Isolation de s├®curit├® entre commerciaux du m├¬me secteur.'}
++                                    </p>
++                                  )}
++                                </div>
+                               </div>
+                             </div>
+                           </div>
+-                        </div>
+-                      );
+-                    })}
+-                  </div>
+-                </section>
+-              </div>
++                        );
++                      })}
++                    </div>
++                  </section>
++                </div>
+ 
+-              <div className="p-6 border-t border-white/5 space-y-3">
+-                <button 
+-                  onClick={() => {
+-                    onSelectContact(selectedExclusionUser.uid);
+-                    setSelectedExclusionUserId(null);
+-                  }}
+-                  className="w-full flex items-center justify-center gap-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-2xl text-blue-500 hover:bg-blue-500 hover:text-white transition-all group"
+-                >
+-                  <MessageSquare size={18} className="group-hover:scale-110 transition-transform" />
+-                  <span className="text-[10px] font-black uppercase tracking-[0.2em]">Ouvrir le mini-chat</span>
+-                </button>
+-                <button 
+-                  onClick={() => handleAction('clear_restrictions', selectedExclusionUser.uid)}
+-                  className="w-full flex items-center justify-center gap-3 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 hover:bg-red-500 hover:text-white transition-all group"
+-                >
+-                  <Trash2 size={18} className="group-hover:scale-110 transition-transform" />
+-                  <span className="text-[10px] font-black uppercase tracking-[0.2em]">R├®initialiser les exclusions</span>
+-                </button>
+-              </div>
+-            </motion.div>
++                <div className="p-8 border-t border-white/5 space-y-3 flex-shrink-0">
++                  <button 
++                    onClick={() => {
++                      onSelectContact(selectedExclusionUser.uid);
++                      setSelectedExclusionUserId(null);
++                    }}
++                    className="w-full flex items-center justify-center gap-3 p-5 bg-blue-500/10 border border-blue-500/20 rounded-3xl text-blue-500 hover:bg-blue-500 hover:text-white transition-all group"
++                  >
++                    <MessageSquare size={18} className="group-hover:scale-110 transition-transform" />
++                    <span className="text-[10px] font-black uppercase tracking-[0.2em]">Ouvrir le mini-chat</span>
++                  </button>
++                  <button 
++                    onClick={() => handleAction('clear_restrictions', selectedExclusionUser.uid)}
++                    className="w-full flex items-center justify-center gap-3 p-5 bg-red-500/10 border border-red-500/20 rounded-3xl text-red-500 hover:bg-red-500 hover:text-white transition-all group"
++                  >
++                    <Trash2 size={18} className="group-hover:scale-110 transition-transform" />
++                    <span className="text-[10px] font-black uppercase tracking-[0.2em]">R├®initialiser les exclusions</span>
++                  </button>
++                </div>
++              </motion.div>
++            </div>
+           </>
+         )}
+       </AnimatePresence>
+diff --git a/Messages/src/components/chat/MiniChat.tsx b/a/src/components/chat/MiniChat.tsx
+index daf41d35..f676f1b0 100644
+--- a/Messages/src/components/chat/MiniChat.tsx
++++ b/a/src/components/chat/MiniChat.tsx
+@@ -1,11 +1,11 @@
+ import React, { useState, useEffect, useRef } from 'react';
+-import { createPortal } from 'react-dom';
+-import { X, ChevronLeft, Search, MessageSquare, Shield, User, Send, Mic, Paperclip, Video, MoreVertical, Ban, ImageIcon, Trash2, ChevronUp, ChevronDown, Mail, Image, FileText } from 'lucide-react';
++import { X, ChevronLeft, Search, MessageSquare, Shield, User, Send, Mic, Paperclip, Video, MoreVertical, Ban, ImageIcon, Trash2, ChevronUp, ChevronDown, Mail, Image, FileText, Settings, CheckCircle2, Link2Off } from 'lucide-react';
+ import { UserProfile, Chat, Message } from '../../types';
+ import { cn } from '../../lib/utils';
+ import ChatWindow from './ChatWindow';
+ import ContactList from './ContactList';
+ import { motion, AnimatePresence } from 'motion/react';
++import { demoService } from '../../demo-service';
+ 
+ interface MiniChatProps {
+   isOpen: boolean;
+@@ -20,131 +20,169 @@ interface MiniChatProps {
+   onPinUser: (userId: string) => void;
+   totalUnreadCount: number;
+   selectedUserIds?: string[];
++  onSelectedUsersChange?: (userIds: string[]) => void;
+   onForward?: (msg: Message) => void;
++  activeChatId?: string | null;
+ }
+ 
+-export default function MiniChat({ isOpen, onClose, users, currentUser, chats, onChatSelect, onStartChat, buttonPos, pinnedUserIds, onPinUser, totalUnreadCount, selectedUserIds = [], onForward }: MiniChatProps) {
++export default function MiniChat({ 
++  isOpen, 
++  onClose, 
++  users, 
++  currentUser, 
++  chats, 
++  onChatSelect, 
++  onStartChat, 
++  buttonPos, 
++  pinnedUserIds, 
++  onPinUser, 
++  totalUnreadCount, 
++  selectedUserIds = [], 
++  onSelectedUsersChange,
++  onForward, 
++  activeChatId: propActiveChatId 
++}: MiniChatProps) {
+   const [step, setStep] = useState<'contacts' | 'discussion'>('contacts');
+   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+   const [isDeployed, setIsDeployed] = useState(false);
+   const [page, setPage] = useState(0);
+-  const itemsPerPage = 9;
+   const menuRef = useRef<HTMLDivElement>(null);
+-  const [isBrowser, setIsBrowser] = useState(false);
+-
+-  // Must call all hooks before any early return
+-  useEffect(() => {
+-    setIsBrowser(true);
+-  }, []);
++  const chatWindowRef = useRef<HTMLDivElement>(null);
++  const itemsPerPage = 9;
+ 
++  // Sync with prop
+   useEffect(() => {
+-    if (isOpen) {
+-      const timer = setTimeout(() => setIsDeployed(true), 100);
+-      return () => clearTimeout(timer);
+-    } else {
+-      setIsDeployed(false);
++    if (propActiveChatId) {
++      setActiveChatId(propActiveChatId);
++      setStep('discussion');
++    } else if (step === 'discussion') {
+       setStep('contacts');
+       setActiveChatId(null);
+     }
+-  }, [isOpen]);
+-
+-  // Early return after all hooks
+-  if (!isBrowser) {
+-    return null;
+-  }
++  }, [propActiveChatId]);
+ 
+-  // Calculate menu height based on viewport
+-  const getMenuDimensions = () => {
+-    const viewportHeight = window.innerHeight;
+-    const viewportWidth = window.innerWidth;
+-    const margin = 40;
+-    const headerSpace = 100;
+-    
+-    // Mobile: full screen
+-    if (viewportWidth < 1024) {
+-      return { height: viewportHeight - margin, width: viewportWidth, isMobile: true };
+-    }
+-    
+-    // Tablet and Desktop: use fixed narrow width like original design
+-    const height = Math.min(viewportHeight * 0.85, viewportHeight - margin - headerSpace);
+-    return { height, width: 96, isMobile: false }; // w-24 = 96px
+-  };
+-
+-  const dimensions = getMenuDimensions();
++  useEffect(() => {
++    const handleClickOutside = (event: MouseEvent) => {
++      const isOutsideMenu = menuRef.current && !menuRef.current.contains(event.target as Node);
++      const isOutsideChat = !chatWindowRef.current || !chatWindowRef.current.contains(event.target as Node);
++      
++      if (isOutsideMenu && isOutsideChat) {
++        onClose();
++      }
++    };
+ 
+-  // Calculate position to keep menu in viewport - aligned to right side
+-  const getMenuPosition = () => {
+-    const viewportWidth = window.innerWidth;
+-    const viewportHeight = window.innerHeight;
+-    const margin = 20;
+-    const menuWidth = dimensions.width;
+-    
+-    // Button position from props (draggable button)
+-    const buttonY = buttonPos.y + 40;
+-    
+-    // Calculate vertical position
+-    let top: number;
+-    
+-    // If button is in lower half, open upwards
+-    if (buttonY > viewportHeight / 2) {
+-      top = buttonY - dimensions.height - 40;
+-    } else {
+-      top = buttonY + 40;
++    if (isOpen) {
++      document.addEventListener('mousedown', handleClickOutside);
+     }
+-    
+-    // Clamp to viewport
+-    top = Math.max(margin, Math.min(top, viewportHeight - dimensions.height - margin));
+-    
+-    // Horizontal: align to right side of screen
+-    const right = margin;
+-    
+-    return { top, right };
+-  };
++    return () => {
++      document.removeEventListener('mousedown', handleClickOutside);
++    };
++  }, [isOpen, onClose]);
+ 
+-  const position = getMenuPosition();
+-
+-  // Filter and sort contacts
+   const allContacts = users.filter(u => {
+     const isMe = u.uid === currentUser.uid;
+     if (isMe) return false;
++
++    // 1. If I am a commercial, I cannot see suppliers with adminOnly = true
+     if (currentUser.role === 'commercial' && u.role === 'prestataire' && u.adminOnly) return false;
++    
++    // 2. If I am a supplier with adminOnly = true, I can only see admins
+     if (currentUser.role === 'prestataire' && currentUser.adminOnly && u.role !== 'admin') return false;
++
++    // 3. Restricted Contacts (Isolation)
+     if (currentUser.restrictedContacts?.includes(u.uid)) return false;
++
++    // 4. Global Isolation
+     if (currentUser.role !== 'admin') {
+       if (currentUser.isIsolated && u.role !== 'admin') return false;
+       if (u.isIsolated) return false;
+     }
++
+     return true;
+   });
+-
++  // Sort contacts: Unread messages first, then pinned, then alphabetical
+   const displayContacts = [...allContacts].sort((a, b) => {
+     const chatA = chats.find(c => c.participants.includes(a.uid) && c.participants.includes(currentUser.uid));
+     const chatB = chats.find(c => c.participants.includes(b.uid) && c.participants.includes(currentUser.uid));
++    
+     const unreadA = chatA?.unreadCount[currentUser.uid] || 0;
+     const unreadB = chatB?.unreadCount[currentUser.uid] || 0;
++    
++    // 1. Unread first
+     if (unreadA > 0 && unreadB === 0) return -1;
+     if (unreadA === 0 && unreadB > 0) return 1;
++    
++    // 2. Pinned second
+     const isPinnedA = pinnedUserIds.includes(a.uid);
+     const isPinnedB = pinnedUserIds.includes(b.uid);
+     if (isPinnedA && !isPinnedB) return -1;
+     if (!isPinnedA && isPinnedB) return 1;
++    
++    // 3. Alphabetical
+     return a.displayName.localeCompare(b.displayName);
+   });
+-
+   const totalPages = Math.ceil(displayContacts.length / itemsPerPage);
+   const currentContacts = displayContacts.slice(page * itemsPerPage, (page + 1) * itemsPerPage);
+ 
++  // Calculate absolute position based on button offset
++  const absoluteX = buttonPos.x + 32; // 2rem = 32px
++  const absoluteY = buttonPos.y + window.innerHeight / 2;
++
++  // Calculate dynamic height and position to stay within viewport
++  const margin = 20;
++  const maxMenuHeight = 880;
++  const menuHeight = Math.min(maxMenuHeight, window.innerHeight - margin * 2);
++  const halfHeight = menuHeight / 2;
++
++  let topOffset = 0;
++  if (absoluteY - halfHeight < margin) {
++    topOffset = margin - (absoluteY - halfHeight);
++  } else if (absoluteY + halfHeight > window.innerHeight - margin) {
++    topOffset = (window.innerHeight - margin) - (absoluteY + halfHeight);
++  }
++
++  useEffect(() => {
++    if (isOpen) {
++      const timer = setTimeout(() => setIsDeployed(true), 100);
++      return () => clearTimeout(timer);
++    } else {
++      setIsDeployed(false);
++      setStep('contacts');
++      setActiveChatId(null);
++    }
++  }, [isOpen]);
++
+   const handleSelectContact = async (userId: string) => {
+     const chatId = await onStartChat(userId);
+     if (chatId) {
+       setActiveChatId(chatId);
+       setStep('discussion');
++      onChatSelect(chatId);
+     }
+   };
+ 
+   const handleBack = () => {
+     setStep('contacts');
+     setActiveChatId(null);
++    onChatSelect(null);
++  };
++
++  const toggleSelect = (userId: string, e: React.MouseEvent) => {
++    e.stopPropagation();
++    if (!onSelectedUsersChange) return;
++    onSelectedUsersChange(
++      selectedUserIds.includes(userId) ? selectedUserIds.filter(id => id !== userId) : [...selectedUserIds, userId]
++    );
++  };
++
++  const handlePairwiseIsolation = async () => {
++    if (selectedUserIds.length < 2) return;
++    for (let i = 0; i < selectedUserIds.length; i++) {
++      for (let j = i + 1; j < selectedUserIds.length; j++) {
++        await demoService.toggleRestrictContact(selectedUserIds[i], selectedUserIds[j]);
++      }
++    }
++    onSelectedUsersChange?.([]);
+   };
+ 
+   const getRoleColor = (role: string) => {
+@@ -165,45 +203,38 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+     }
+   };
+ 
+-  if (typeof window === 'undefined') return null;
+-
+-  return createPortal(
++  return (
+     <AnimatePresence>
+       {isOpen && (
+         <div className="fixed inset-0 z-[200] pointer-events-none">
+-          {/* Backdrop */}
+-          <motion.div 
+-            initial={{ opacity: 0 }}
+-            animate={{ opacity: 1 }}
+-            exit={{ opacity: 0 }}
+-            className="fixed inset-0 bg-black/60 backdrop-blur-md pointer-events-auto"
+-            onClick={onClose}
+-          />
++          {/* Backdrop REMOVED to allow clicking the trigger button again */}
+ 
+           {/* Split Animation Container (Dynamic Position - M1 Menu) */}
+           <div 
+             ref={menuRef}
+-            className="fixed pointer-events-auto flex flex-col items-center justify-center z-[200]"
++            className="absolute pointer-events-auto flex flex-col items-end justify-center"
+             style={{ 
+-              top: position.top,
+-              right: position.right
++              right: 0, 
++              top: absoluteY,
++              transform: `translate(0, calc(-50% + ${topOffset}px))`
+             }}
+           >
+-            {/* Top Half of Pill (Navigation App Icon Style) */}
++            {/* Top Half of Pill */}
+             <motion.div
+               initial={{ y: 0, opacity: 1 }}
+-              animate={{ y: isDeployed ? -(dimensions.height / 2 - 40) : 0, opacity: isDeployed ? 0 : 1 }}
++              animate={{ y: isDeployed ? -(menuHeight / 2 - 40) : 0, opacity: isDeployed ? 0 : 1 }}
+               transition={{ type: 'spring', damping: 15, stiffness: 200 }}
+               className="w-20 h-10 bg-[#0a0b0d] rounded-t-[28px] border-t border-x border-white/5 flex items-center justify-center relative"
+             >
+-              <svg 
+-                viewBox="0 0 24 24" 
+-                className="w-11 h-11 opacity-40"
+-                xmlns="http://www.w3.org/2000/svg"
++              <motion.div
++                animate={{ 
++                  rotate: isDeployed ? [0, -10, 10, -10, 10, 0] : 0,
++                  opacity: isDeployed ? 1 : 0.4
++                }}
++                transition={{ duration: 0.5, ease: "easeInOut" }}
+               >
+-                <path d="M22 12L3 3L6.5 12L22 12Z" fill="white" />
+-                <path d="M22 12L6.5 12L3 21L22 12Z" fill="#d1d5db" />
+-              </svg>
++                <Mail size={24} className="text-blue-500" />
++              </motion.div>
+               
+               {/* Notification Badge (Top-Right Overlay) */}
+               <AnimatePresence>
+@@ -237,7 +268,7 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+             {/* Bottom Half of Pill */}
+             <motion.div
+               initial={{ y: 0, opacity: 1 }}
+-              animate={{ y: isDeployed ? (dimensions.height / 2 - 40) : 0, opacity: isDeployed ? 0 : 1 }}
++              animate={{ y: isDeployed ? (menuHeight / 2 - 40) : 0, opacity: isDeployed ? 0 : 1 }}
+               transition={{ type: 'spring', damping: 15, stiffness: 200 }}
+               className="w-20 h-10 bg-[#0a0b0d] rounded-b-[28px] border-b border-x border-white/5 flex items-center justify-center text-sm font-black text-white relative"
+             />
+@@ -246,8 +277,7 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+             <motion.div 
+               initial={{ height: 80, opacity: 0, scale: 0.8, y: 0 }}
+               animate={{ 
+-                height: isDeployed && step === 'contacts' ? dimensions.height : 80, 
+-                width: dimensions.width,
++                height: isDeployed && step === 'contacts' ? menuHeight : 80, 
+                 opacity: isDeployed && step === 'contacts' ? 1 : 0,
+                 scale: isDeployed && step === 'contacts' ? 1 : 0.8,
+                 y: 0
+@@ -255,7 +285,7 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+               exit={{ height: 80, opacity: 0, scale: 0.8 }}
+               transition={{ type: 'spring', damping: 18, stiffness: 250 }}
+               className={cn(
+-                "absolute bg-[#0a0b0d] rounded-[29px] shadow-[0_0_80px_rgba(0,0,0,0.9)] border border-[#0078ff] flex flex-col items-center pt-6 pb-6 overflow-hidden z-50",
++                "absolute w-24 bg-[#0a0b0d] rounded-[29px] shadow-[0_0_80px_rgba(0,0,0,0.9)] border border-[#0078ff] flex flex-col items-center pt-6 pb-6 overflow-hidden z-50",
+                 step === 'discussion' && "pointer-events-none"
+               )}
+             >
+@@ -267,6 +297,19 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+                 />
+               </div>
+ 
++              {/* Isolation Action Button (MiniChat) */}
++              {selectedUserIds.length >= 2 && currentUser.role === 'admin' && (
++                <div className="mt-4 px-2 w-full">
++                  <button 
++                    onClick={handlePairwiseIsolation}
++                    className="w-full flex flex-col items-center gap-1 p-2 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 hover:bg-red-500 hover:text-white transition-all group"
++                  >
++                    <Link2Off size={16} className="group-hover:scale-110 transition-transform" />
++                    <span className="text-[7px] font-black uppercase tracking-widest">Isoler ({selectedUserIds.length})</span>
++                  </button>
++                </div>
++              )}
++
+               {/* Navigation Up Arrow (Image 2) - Centered */}
+               <div className="mb-4 p-2 flex justify-center w-full">
+                 <button 
+@@ -282,7 +325,7 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+               </div>
+ 
+               {/* Contact List (M1 Menu - Pinned First) */}
+-              <div className="flex-1 w-full px-2 py-4 relative overflow-hidden overflow-y-auto">
++              <div className="flex-1 w-full px-2 py-4 relative overflow-hidden">
+                 <AnimatePresence mode="wait" initial={false}>
+                   <motion.div
+                     key={page}
+@@ -317,6 +360,7 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+                             {/* Avatar with Ring (Image 2) - Enlarged */}
+                             <div className={cn(
+                               "w-16 h-16 rounded-full border-2 p-1 transition-all duration-500",
++                              selectedUserIds.includes(contact.uid) ? "border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.8)] scale-110" :
+                               currentUser.blockedUsers?.includes(contact.uid) ? "border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.8)]" :
+                               isBlockedByOther ? "border-gray-400 shadow-[0_0_20px_rgba(156,163,175,0.8)]" :
+                               isPinned ? "border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.8)]" :
+@@ -324,19 +368,38 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+                               contact.role === 'prestataire' ? "border-[#a2ff00] shadow-[0_0_15px_rgba(162,255,0,0.4)]" :
+                               "border-[#ff8400] shadow-[0_0_15px_rgba(255,132,0,0.4)]"
+                             )}>
+-                              <div className="w-full h-full rounded-full overflow-hidden bg-gray-900">
++                              <div className="w-full h-full rounded-full overflow-hidden bg-gray-900 relative">
+                                 <img 
+                                   src={contact.photoURL} 
+                                   alt={contact.displayName}
+                                   className={cn(
+                                     "w-full h-full rounded-full object-cover",
+-                                    (currentUser.blockedUsers?.includes(contact.uid) || isBlockedByOther) && "grayscale brightness-75"
++                                    (currentUser.blockedUsers?.includes(contact.uid) || isBlockedByOther) && "grayscale brightness-75",
++                                    selectedUserIds.includes(contact.uid) && "brightness-50"
+                                   )}
+                                   referrerPolicy="no-referrer"
+                                 />
++                                {selectedUserIds.includes(contact.uid) && (
++                                  <div className="absolute inset-0 flex items-center justify-center text-blue-500">
++                                    <CheckCircle2 size={24} strokeWidth={3} />
++                                  </div>
++                                )}
+                               </div>
+                             </div>
+ 
++                            {/* Selection Toggle (Small Circle) */}
++                            {currentUser.role === 'admin' && (
++                              <button
++                                onClick={(e) => toggleSelect(contact.uid, e)}
++                                className={cn(
++                                  "absolute -top-1 -left-1 h-6 w-6 rounded-full border-2 border-[#0a0b0d] z-20 flex items-center justify-center transition-all",
++                                  selectedUserIds.includes(contact.uid) ? "bg-blue-500 scale-110" : "bg-white/10 opacity-0 group-hover:opacity-100"
++                                )}
++                              >
++                                {selectedUserIds.includes(contact.uid) ? <CheckCircle2 size={12} className="text-white" /> : <div className="h-2 w-2 rounded-full bg-white/40" />}
++                              </button>
++                            )}
++
+                             {/* Status Dot (Image 2 - Bottom Right) */}
+                             {(contact.isOnline || unreadCount > 0) && !currentUser.blockedUsers?.includes(contact.uid) && !isBlockedByOther && (
+                               <div className={cn(
+@@ -380,35 +443,6 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+                               )}
+                             </div>
+                           </button>
+-
+-                          {/* Name Tooltip (Modern Glass Style) */}
+-                          <div className="absolute left-full ml-4 px-3 py-2 bg-[#0a0b0d]/95 backdrop-blur-xl text-white rounded-xl opacity-0 group-hover:opacity-100 transition-all duration-300 translate-x-[-10px] group-hover:translate-x-0 whitespace-nowrap pointer-events-none z-50 shadow-[0_10px_40px_rgba(0,0,0,0.6)] border border-white/10 flex flex-col gap-1 min-w-[120px]">
+-                            <div className="flex items-center gap-2">
+-                              <div className={cn("w-2 h-2 rounded-full", contact.isOnline ? "bg-[#a2ff00]" : "bg-gray-500")} />
+-                              <span className="text-xs font-black">{contact.displayName}</span>
+-                            </div>
+-                            {chat?.lastMessage && (
+-                              <div className={cn(
+-                                "text-[10px] flex items-center gap-1.5 pl-4 italic",
+-                                unreadCount > 0 ? "text-blue-400 font-bold" : "text-gray-400"
+-                              )}>
+-                                {(() => {
+-                                  const msg = chat.lastMessage;
+-                                  const isMe = msg.startsWith('Vous : ') || msg.startsWith('You: ');
+-                                  const prefix = isMe ? (msg.startsWith('Vous : ') ? 'Vous : ' : 'You: ') : '';
+-                                  const content = isMe ? msg.substring(prefix.length) : msg;
+-
+-                                  if (content === '[image]') return <><Image size={10} className="text-blue-400" /> Photo</>;
+-                                  if (content === '[video]') return <><Video size={10} className="text-purple-400" /> Vid├®o</>;
+-                                  if (content === '[audio]') return <><Mic size={10} className="text-green-400" /> Audio</>;
+-                                  if (content === '[file]') return <><FileText size={10} className="text-orange-400" /> Fichier</>;
+-                                  return msg.length > 25 ? msg.substring(0, 25) + '...' : msg;
+-                                })()}
+-                              </div>
+-                            )}
+-                            {/* Small Arrow */}
+-                            <div className="absolute right-full top-1/2 -translate-y-1/2 border-8 border-transparent border-r-[#0a0b0d]/95" />
+-                          </div>
+                         </motion.div>
+                       );
+                     })}
+@@ -436,12 +470,13 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+           <AnimatePresence>
+             {step === 'discussion' && activeChatId && (
+               <motion.div
++                ref={chatWindowRef}
+                 initial={{ x: '100%', opacity: 0 }}
+                 animate={{ x: 0, opacity: 1 }}
+                 exit={{ x: '100%', opacity: 0 }}
+                 transition={{ type: 'spring', damping: 25, stiffness: 150 }}
+                 onClick={(e) => e.stopPropagation()}
+-                className="fixed right-8 bottom-8 w-[450px] max-w-[calc(100vw-64px)] max-h-[calc(100vh-140px)] min-h-[400px] bg-[#0f1113] shadow-[0_0_80px_rgba(0,0,0,0.9)] z-[210] border border-white/10 rounded-[48px] overflow-hidden pointer-events-auto"
++                className="fixed right-0 top-1/2 -translate-y-1/2 w-[450px] h-[85vh] bg-[#0f1113] shadow-[0_0_80px_rgba(0,0,0,0.9)] z-[210] border border-white/10 rounded-[48px] overflow-hidden pointer-events-auto"
+               >
+                 <ChatWindow 
+                   chatId={activeChatId} 
+@@ -460,7 +495,6 @@ export default function MiniChat({ isOpen, onClose, users, currentUser, chats, o
+           </AnimatePresence>
+         </div>
+       )}
+-    </AnimatePresence>,
+-    document.body
++    </AnimatePresence>
+   );
+ }
+diff --git a/a/src/demo-service.ts b/a/src/demo-service.ts
+new file mode 100644
+index 00000000..a452aa53
+--- /dev/null
++++ b/a/src/demo-service.ts
+@@ -0,0 +1,857 @@
++import { UserProfile, Chat, Message, AdminSettings } from './types';
++import { Timestamp } from 'firebase/firestore';
++
++// Mock Data
++export const MOCK_USERS: UserProfile[] = [
++  // Admins (2)
++  {
++    uid: 'admin-1',
++    email: 'admin1@demo.com',
++    displayName: 'Sarah Wilson',
++    photoURL: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=400&fit=crop',
++    role: 'admin',
++    isOnline: false,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: true, canDisableNotifications: true, canRemoveChat: true }
++  },
++  {
++    uid: 'admin-2',
++    email: 'admin2@demo.com',
++    displayName: 'Marcus Chen',
++    photoURL: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop',
++    role: 'admin',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: true, canDisableNotifications: true, canRemoveChat: true }
++  },
++  // Suppliers (4)
++  {
++    uid: 'sup-1',
++    email: 'sup1@demo.com',
++    displayName: 'Elena Rodriguez',
++    photoURL: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=400&h=400&fit=crop',
++    role: 'prestataire',
++    isOnline: true,
++    isTyping: false,
++    adminOnly: true,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sup-2',
++    email: 'sup2@demo.com',
++    displayName: 'David Smith',
++    photoURL: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&h=400&fit=crop',
++    role: 'prestataire',
++    isOnline: false,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sup-3',
++    email: 'sup3@demo.com',
++    displayName: 'Sophie Martin',
++    photoURL: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=400&fit=crop',
++    role: 'prestataire',
++    isOnline: true,
++    isTyping: false,
++    adminOnly: true,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sup-4',
++    email: 'sup4@demo.com',
++    displayName: 'James Wilson',
++    photoURL: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=400&h=400&fit=crop',
++    role: 'prestataire',
++    isOnline: false,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  // Sales (14)
++  {
++    uid: 'sales-1',
++    email: 'sales1@demo.com',
++    displayName: 'Lucas Petit',
++    photoURL: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: ['sales-2'],
++    exclusionMetadata: {
++      'sales-2': { date: '06 Avril 2026', reason: 'Isolation de s├®curit├® entre commerciaux du m├¬me secteur.', isPublic: false }
++    },
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-2',
++    email: 'sales2@demo.com',
++    displayName: 'Emma Richard',
++    photoURL: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: ['sales-1'],
++    exclusionMetadata: {
++      'sales-1': { date: '06 Avril 2026', reason: 'Isolation de s├®curit├® entre commerciaux du m├¬me secteur.', isPublic: false }
++    },
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-3',
++    email: 'sales3@demo.com',
++    displayName: 'Hugo Michel',
++    photoURL: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: false,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: ['sales-4'],
++    exclusionMetadata: {
++      'sales-4': { date: '06 Avril 2026', reason: 'Isolation de s├®curit├® entre commerciaux du m├¬me secteur.', isPublic: false }
++    },
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-4',
++    email: 'sales4@demo.com',
++    displayName: 'Chlo├® Garcia',
++    photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: ['sales-3'],
++    exclusionMetadata: {
++      'sales-3': { date: '06 Avril 2026', reason: 'Isolation de s├®curit├® entre commerciaux du m├¬me secteur.', isPublic: false }
++    },
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-5',
++    email: 'sales5@demo.com',
++    displayName: 'Enzo Martinez',
++    photoURL: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-6',
++    email: 'sales6@demo.com',
++    displayName: 'L├®a Rodriguez',
++    photoURL: 'https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: false,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-7',
++    email: 'sales7@demo.com',
++    displayName: 'Nathan Lopez',
++    photoURL: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-8',
++    email: 'sales8@demo.com',
++    displayName: 'Jade Perez',
++    photoURL: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-9',
++    email: 'sales9@demo.com',
++    displayName: 'L├®o Sanchez',
++    photoURL: 'https://images.unsplash.com/photo-1504257432389-52343af06ae3?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-10',
++    email: 'sales10@demo.com',
++    displayName: 'Manon Gonzalez',
++    photoURL: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: false,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-11',
++    email: 'sales11@demo.com',
++    displayName: 'Louis Gomez',
++    photoURL: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-12',
++    email: 'sales12@demo.com',
++    displayName: 'Zoe Ruiz',
++    photoURL: 'https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-13',
++    email: 'sales13@demo.com',
++    displayName: 'Gabriel Diaz',
++    photoURL: 'https://images.unsplash.com/photo-1503023345310-bd7c1de61c7d?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-14',
++    email: 'sales14@demo.com',
++    displayName: 'Mila Hernandez',
++    photoURL: 'https://images.unsplash.com/photo-1527980965255-d3b416303d12?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-15',
++    email: 'sales15@demo.com',
++    displayName: 'Th├®o Moretti',
++    photoURL: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: false,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'edouard-1',
++    email: 'edouard@demo.com',
++    displayName: 'Edouard',
++    photoURL: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    status: 'Le Church ├á Paris - Morcenx',
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-15',
++    email: 'sales15@demo.com',
++    displayName: 'Thomas Bernard',
++    photoURL: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-16',
++    email: 'sales16@demo.com',
++    displayName: 'Julie Lefebvre',
++    photoURL: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: false,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-17',
++    email: 'sales17@demo.com',
++    displayName: 'Nicolas Dubois',
++    photoURL: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-18',
++    email: 'sales18@demo.com',
++    displayName: 'Clara Martin',
++    photoURL: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sales-19',
++    email: 'sales19@demo.com',
++    displayName: 'Hugo Petit',
++    photoURL: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: false,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'sup-5',
++    email: 'sup5@demo.com',
++    displayName: 'Elena Moretti',
++    photoURL: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=400&h=400&fit=crop',
++    role: 'prestataire',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'user-new-1',
++    email: 'new1@demo.com',
++    displayName: 'Amina Traor├®',
++    photoURL: 'https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=400&h=400&fit=crop',
++    role: 'commercial',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  },
++  {
++    uid: 'user-new-2',
++    email: 'new2@demo.com',
++    displayName: 'Jean Dupont',
++    photoURL: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&h=400&fit=crop',
++    role: 'prestataire',
++    isOnline: true,
++    isTyping: false,
++    blockedUsers: [],
++    mutedUsers: [],
++    restrictedContacts: [],
++    permissions: { canChat: true, canBlock: false, canDisableNotifications: true, canRemoveChat: false }
++  }
++];
++
++export const MOCK_CHATS: Chat[] = [
++  {
++    id: 'chat-1',
++    participants: ['admin-1', 'user-2'],
++    lastMessage: 'You: Hey! We are ready...',
++    lastMessageAt: Timestamp.now(),
++    unreadCount: { 'admin-1': 0, 'user-2': 1 }
++  },
++  {
++    id: 'chat-2',
++    participants: ['admin-1', 'user-3'],
++    lastMessage: 'Ok! Let\'s discuss it on th...',
++    lastMessageAt: Timestamp.now(),
++    unreadCount: { 'admin-1': 0, 'user-3': 0 }
++  },
++  {
++    id: 'chat-3',
++    participants: ['admin-1', 'edouard-1'],
++    lastMessage: 'Check this document ­ƒôä',
++    lastMessageAt: Timestamp.now(),
++    unreadCount: { 'admin-1': 0, 'edouard-1': 0 }
++  }
++];
++
++export const MOCK_MESSAGES: Record<string, Message[]> = {
++  'chat-1': [
++    {
++      id: 'm1',
++      chatId: 'chat-1',
++      senderId: 'user-2',
++      content: 'Hello! I added new flows to our design system. Now you can use them for your projects!',
++      type: 'text',
++      status: 'seen',
++      createdAt: new Timestamp(Timestamp.now().seconds - 3600, 0)
++    },
++    {
++      id: 'm2',
++      chatId: 'chat-1',
++      senderId: 'admin-1',
++      content: 'Hey guys! Important news!',
++      type: 'text',
++      status: 'seen',
++      createdAt: new Timestamp(Timestamp.now().seconds - 1800, 0)
++    },
++    {
++      id: 'm3',
++      chatId: 'chat-1',
++      senderId: 'user-2',
++      content: 'Our intern @jchurch has successfully completed his probationary period and is now part of our team!',
++      type: 'text',
++      status: 'seen',
++      createdAt: new Timestamp(Timestamp.now().seconds - 900, 0)
++    }
++  ],
++  'chat-3': [
++    {
++      id: 'm4',
++      chatId: 'chat-3',
++      senderId: 'edouard-1',
++      content: 'Voici les photos du projet',
++      type: 'text',
++      status: 'seen',
++      createdAt: new Timestamp(Timestamp.now().seconds - 7200, 0)
++    },
++    {
++      id: 'm5',
++      chatId: 'chat-3',
++      senderId: 'edouard-1',
++      content: 'Image du site',
++      type: 'image',
++      fileUrl: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&q=80',
++      status: 'seen',
++      createdAt: new Timestamp(Timestamp.now().seconds - 7100, 0)
++    },
++    {
++      id: 'm6',
++      chatId: 'chat-3',
++      senderId: 'admin-1',
++      content: 'Super ! Peux-tu m\'envoyer le rapport PDF ?',
++      type: 'text',
++      status: 'seen',
++      createdAt: new Timestamp(Timestamp.now().seconds - 3600, 0)
++    },
++    {
++      id: 'm7',
++      chatId: 'chat-3',
++      senderId: 'edouard-1',
++      content: 'Rapport_Final.pdf',
++      type: 'file',
++      fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
++      status: 'seen',
++      createdAt: new Timestamp(Timestamp.now().seconds - 3500, 0)
++    },
++    {
++      id: 'm8',
++      chatId: 'chat-3',
++      senderId: 'edouard-1',
++      content: 'Message vocal',
++      type: 'audio',
++      fileUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
++      status: 'seen',
++      createdAt: new Timestamp(Timestamp.now().seconds - 3400, 0)
++    }
++  ]
++};
++
++export const MOCK_SETTINGS: AdminSettings = {
++  allowProviderChat: true,
++  allowSalesChat: true,
++  allowUserBlocking: true,
++  allowNotifications: true,
++  contactListWidth: 384 // Default width (w-96)
++};
++
++// Demo State Management
++class DemoService {
++  private users = [...MOCK_USERS];
++  private chats = [...MOCK_CHATS];
++  private messages = { ...MOCK_MESSAGES };
++  private settings = { ...MOCK_SETTINGS };
++  private currentUser: UserProfile | null = null;
++  private listeners: Set<() => void> = new Set();
++
++  constructor() {
++    // Load from localStorage if available
++    const saved = localStorage.getItem('messenger_demo_data_v3');
++    if (saved) {
++      const data = JSON.parse(saved);
++      this.users = data.users;
++      this.chats = data.chats;
++      this.messages = data.messages;
++      this.settings = data.settings;
++    } else {
++      // Clear old versions
++      localStorage.removeItem('messenger_demo_data');
++      localStorage.removeItem('messenger_demo_data_v2');
++      this.save();
++    }
++  }
++
++  private save() {
++    localStorage.setItem('messenger_demo_data_v3', JSON.stringify({
++      users: this.users,
++      chats: this.chats,
++      messages: this.messages,
++      settings: this.settings
++    }));
++    this.listeners.forEach(l => l());
++  }
++
++  subscribe(callback: () => void) {
++    this.listeners.add(callback);
++    return () => this.listeners.delete(callback);
++  }
++
++  // Auth
++  login(uid: string) {
++    this.currentUser = this.users.find(u => u.uid === uid) || this.users[0];
++    this.save();
++  }
++
++  logout() {
++    this.currentUser = null;
++    this.save();
++  }
++
++  getCurrentUser() { return this.currentUser; }
++  getUsers() { return this.users; }
++  getChats() { return this.chats.filter(c => c.participants.includes(this.currentUser?.uid || '')); }
++  getSettings() { return this.settings; }
++  
++  getMessages(chatId: string) { return this.messages[chatId] || []; }
++
++  async sendMessage(chatId: string, content: string, type: any = 'text', fileUrl?: string) {
++    if (!this.currentUser) return;
++    
++    const chat = this.chats.find(c => c.id === chatId);
++    if (!chat) return;
++
++    const otherId = chat.participants.find(id => id !== this.currentUser?.uid);
++    if (otherId) {
++      const otherUser = this.users.find(u => u.uid === otherId);
++      if (otherUser && otherUser.blockedUsers.includes(this.currentUser.uid)) {
++        console.warn('Cannot send message: You are blocked by this user.');
++        return;
++      }
++    }
++
++    const msg: Message = {
++      id: Math.random().toString(36).substr(2, 9),
++      chatId,
++      senderId: this.currentUser.uid,
++      content,
++      type,
++      fileUrl,
++      status: 'sent',
++      createdAt: Timestamp.now()
++    };
++    if (!this.messages[chatId]) this.messages[chatId] = [];
++    this.messages[chatId].push(msg);
++    
++    chat.lastMessage = type === 'text' ? content : `[${type}]`;
++    chat.lastMessageAt = Timestamp.now();
++    if (otherId) chat.unreadCount[otherId] = (chat.unreadCount[otherId] || 0) + 1;
++    
++    this.save();
++  }
++
++  private mockReply(chatId: string) {
++    const chat = this.chats.find(c => c.id === chatId);
++    if (!chat || !this.currentUser) return;
++    
++    const otherId = chat.participants.find(id => id !== this.currentUser?.uid);
++    if (!otherId) return;
++
++    // Check if current user has blocked this person
++    if (this.currentUser.blockedUsers.includes(otherId)) {
++      console.warn('Blocked user attempted to send a message (mock).');
++      return;
++    }
++
++    const reply: Message = {
++      id: Math.random().toString(36).substr(2, 9),
++      chatId,
++      senderId: otherId,
++      content: "C'est un message automatique du mode d├®mo ! ­ƒÿè",
++      type: 'text',
++      status: 'delivered',
++      createdAt: Timestamp.now()
++    };
++    this.messages[chatId].push(reply);
++    chat.lastMessage = reply.content;
++    chat.lastMessageAt = Timestamp.now();
++    chat.unreadCount[this.currentUser.uid] = (chat.unreadCount[this.currentUser.uid] || 0) + 1;
++    this.save();
++  }
++
++  updateUserField(uid: string, field: string, value: any) {
++    const idx = this.users.findIndex(u => u.uid === uid);
++    if (idx !== -1) {
++      this.users[idx] = { ...this.users[idx], [field]: value };
++      if (this.currentUser?.uid === uid) this.currentUser = this.users[idx];
++      this.save();
++    }
++  }
++
++  updateSettings(data: Partial<AdminSettings>) {
++    this.settings = { ...this.settings, ...data };
++    this.save();
++  }
++
++  async createChat(otherId: string) {
++    if (!this.currentUser) return;
++    const existing = this.chats.find(c => c.participants.includes(otherId) && c.participants.includes(this.currentUser!.uid));
++    if (existing) return existing.id;
++
++    const newChat: Chat = {
++      id: 'chat-' + Math.random().toString(36).substr(2, 9),
++      participants: [this.currentUser.uid, otherId],
++      unreadCount: { [this.currentUser.uid]: 0, [otherId]: 0 },
++      lastMessageAt: Timestamp.now()
++    };
++    this.chats.push(newChat);
++    this.save();
++    return newChat.id;
++  }
++
++  async clearHistory(chatId: string) {
++    this.messages[chatId] = [];
++    const chat = this.chats.find(c => c.id === chatId);
++    if (chat) {
++      chat.lastMessage = '';
++      chat.lastMessageAt = Timestamp.now();
++    }
++    this.save();
++  }
++
++  async blockUser(targetId: string) {
++    if (!this.currentUser) return;
++    const isBlocked = this.currentUser.blockedUsers.includes(targetId);
++    if (isBlocked) {
++      this.currentUser.blockedUsers = this.currentUser.blockedUsers.filter(id => id !== targetId);
++    } else {
++      this.currentUser.blockedUsers.push(targetId);
++    }
++    this.updateUserField(this.currentUser.uid, 'blockedUsers', this.currentUser.blockedUsers);
++  }
++
++  async removeAccess(targetId: string) {
++    if (!this.currentUser || this.currentUser.role !== 'admin') return;
++    const target = this.users.find(u => u.uid === targetId);
++    if (target) {
++      target.permissions.canChat = false;
++      this.updateUserField(targetId, 'permissions', target.permissions);
++    }
++  }
++
++  async toggleIdentificationBlocked() {
++    if (!this.currentUser) return;
++    this.currentUser.identificationBlocked = !this.currentUser.identificationBlocked;
++    this.updateUserField(this.currentUser.uid, 'identificationBlocked', this.currentUser.identificationBlocked);
++  }
++
++  async toggleMuteUser(targetId: string) {
++    if (!this.currentUser) return;
++    if (!this.currentUser.mutedUsers) this.currentUser.mutedUsers = [];
++    const isMuted = this.currentUser.mutedUsers.includes(targetId);
++    if (isMuted) {
++      this.currentUser.mutedUsers = this.currentUser.mutedUsers.filter(id => id !== targetId);
++    } else {
++      this.currentUser.mutedUsers.push(targetId);
++    }
++    this.updateUserField(this.currentUser.uid, 'mutedUsers', this.currentUser.mutedUsers);
++  }
++
++  async markAsRead(chatId: string, userId: string) {
++    const chat = this.chats.find(c => c.id === chatId);
++    if (chat) {
++      chat.unreadCount[userId] = 0;
++      if (this.messages[chatId]) {
++        this.messages[chatId] = this.messages[chatId].map(m => 
++          m.senderId !== userId ? { ...m, status: 'seen' } : m
++        );
++      }
++      this.save();
++    }
++  }
++
++  async toggleNotificationsBlocked() {
++    if (!this.currentUser) return;
++    this.currentUser.notificationsBlocked = !this.currentUser.notificationsBlocked;
++    this.updateUserField(this.currentUser.uid, 'notificationsBlocked', this.currentUser.notificationsBlocked);
++  }
++
++  async toggleAdminOnly(targetId: string) {
++    if (!this.currentUser || this.currentUser.role !== 'admin') return;
++    const target = this.users.find(u => u.uid === targetId);
++    if (target && target.role === 'prestataire') {
++      target.adminOnly = !target.adminOnly;
++      this.updateUserField(targetId, 'adminOnly', target.adminOnly);
++    }
++  }
++
++  async addReaction(messageId: string, userId: string, emoji: string) {
++    for (const chatId in this.messages) {
++      const msgIdx = this.messages[chatId].findIndex(m => m.id === messageId);
++      if (msgIdx !== -1) {
++        const msg = this.messages[chatId][msgIdx];
++        const reactions = msg.reactions || {};
++        const users = reactions[emoji] || [];
++        
++        if (users.includes(userId)) {
++          reactions[emoji] = users.filter(id => id !== userId);
++          if (reactions[emoji].length === 0) delete reactions[emoji];
++        } else {
++          reactions[emoji] = [...users, userId];
++        }
++        
++        this.messages[chatId][msgIdx] = { ...msg, reactions };
++        this.save();
++        break;
++      }
++    }
++  }
++
++  async toggleIsolation(targetId: string) {
++    if (!this.currentUser || this.currentUser.role !== 'admin') return;
++    const target = this.users.find(u => u.uid === targetId);
++    if (target) {
++      target.isIsolated = !target.isIsolated;
++      this.updateUserField(targetId, 'isIsolated', target.isIsolated);
++    }
++  }
++
++  async toggleRestrictContact(userId: string, targetId: string) {
++    const user = this.users.find(u => u.uid === userId);
++    if (!user) return;
++    
++    if (!user.restrictedContacts) user.restrictedContacts = [];
++    if (!user.exclusionMetadata) user.exclusionMetadata = {};
++    const isRestricted = user.restrictedContacts.includes(targetId);
++    
++    if (isRestricted) {
++      user.restrictedContacts = user.restrictedContacts.filter(id => id !== targetId);
++      delete user.exclusionMetadata[targetId];
++    } else {
++      user.restrictedContacts.push(targetId);
++      user.exclusionMetadata[targetId] = {
++        date: new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }),
++        reason: 'Isolation de s├®curit├® entre commerciaux du m├¬me secteur.',
++        isPublic: false
++      };
++    }
++    
++    this.updateUserField(userId, 'restrictedContacts', user.restrictedContacts);
++    this.updateUserField(userId, 'exclusionMetadata', user.exclusionMetadata);
++    
++    // Make it mutual for isolation
++    const target = this.users.find(u => u.uid === targetId);
++    if (target) {
++      if (!target.restrictedContacts) target.restrictedContacts = [];
++      if (!target.exclusionMetadata) target.exclusionMetadata = {};
++      if (isRestricted) {
++        target.restrictedContacts = target.restrictedContacts.filter(id => id !== userId);
++        delete target.exclusionMetadata[userId];
++      } else if (!target.restrictedContacts.includes(userId)) {
++        target.restrictedContacts.push(userId);
++        target.exclusionMetadata[userId] = {
++          date: new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }),
++          reason: 'Isolation de s├®curit├® entre commerciaux du m├¬me secteur.',
++          isPublic: false
++        };
++      }
++      this.updateUserField(targetId, 'restrictedContacts', target.restrictedContacts);
++      this.updateUserField(targetId, 'exclusionMetadata', target.exclusionMetadata);
++    }
++  }
++
++  async updateExclusionMetadata(userId: string, targetId: string, metadata: { reason?: string, isPublic?: boolean }) {
++    const user = this.users.find(u => u.uid === userId);
++    if (!user || !user.exclusionMetadata || !user.exclusionMetadata[targetId]) return;
++
++    user.exclusionMetadata[targetId] = {
++      ...user.exclusionMetadata[targetId],
++      ...metadata
++    };
++
++    this.updateUserField(userId, 'exclusionMetadata', user.exclusionMetadata);
++  }
++
++  async clearChatHistory(chatId: string) {
++    const chat = this.chats.find(c => c.id === chatId);
++    if (!chat) return;
++    
++    this.messages[chatId] = [];
++    chat.lastMessage = undefined;
++    
++    this.save();
++  }
++}
++
++export const demoService = new DemoService();
+diff --git a/Messages/src/firebase.ts b/a/src/firebase.ts
+index 37ce5b2c..a0a501bc 100644
+--- a/Messages/src/firebase.ts
++++ b/a/src/firebase.ts
+@@ -23,25 +23,7 @@ if (!isDemoMode) {
+   storage = getStorage(app);
+ }
+ 
+-// Allow the parent app to inject its own Firestore instance
+-export function setExternalDb(externalDb: any) {
+-  db = externalDb;
+-}
+-
+-export function setExternalStorage(externalStorage: any) {
+-  storage = externalStorage;
+-}
+-
+-// Use getDb() everywhere to always get the current (possibly injected) db
+-export function getDb() {
+-  return db;
+-}
+-
+-export function getStorageInstance() {
+-  return storage;
+-}
+-
+-export { auth, storage, onSnapshot };
++export { auth, db, storage, onSnapshot };
+ export const googleProvider = !isDemoMode ? new GoogleAuthProvider() : null;
+ 
+ export const signIn = () => !isDemoMode ? signInWithPopup(auth, googleProvider!) : Promise.resolve();
+@@ -68,27 +50,43 @@ export enum OperationType {
+ }
+ 
+ export interface FirestoreErrorInfo {
+-  UID: string | null;
+-  operation: OperationType;
+-  collection: string | null;
+   error: string;
++  operationType: OperationType;
++  path: string | null;
++  authInfo: {
++    userId: string | undefined;
++    email: string | null | undefined;
++    emailVerified: boolean | undefined;
++    isAnonymous: boolean | undefined;
++    tenantId: string | null | undefined;
++    providerInfo: {
++      providerId: string;
++      displayName: string | null;
++      email: string | null;
++      photoUrl: string | null;
++    }[];
++  }
+ }
+ 
+ export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+-  // Extract collection from path if possible (usually the first segment of path)
+-  let collection = path;
+-  if (path && path.includes('/')) {
+-    collection = path.split('/')[0];
+-  }
+-
+   const errInfo: FirestoreErrorInfo = {
+-    UID: auth?.currentUser?.uid || null,
+-    operation: operationType,
+-    collection: collection,
+-    error: error instanceof Error ? error.message : String(error)
+-  };
+-  
+-  const jsonError = JSON.stringify(errInfo);
+-  console.error('Firestore Strict Error: ', jsonError);
+-  throw new Error(jsonError);
++    error: error instanceof Error ? error.message : String(error),
++    authInfo: {
++      userId: auth.currentUser?.uid,
++      email: auth.currentUser?.email,
++      emailVerified: auth.currentUser?.emailVerified,
++      isAnonymous: auth.currentUser?.isAnonymous,
++      tenantId: auth.currentUser?.tenantId,
++      providerInfo: auth.currentUser?.providerData.map(provider => ({
++        providerId: provider.providerId,
++        displayName: provider.displayName,
++        email: provider.email,
++        photoUrl: provider.photoURL
++      })) || []
++    },
++    operationType,
++    path
++  }
++  console.error('Firestore Error: ', JSON.stringify(errInfo));
++  throw new Error(JSON.stringify(errInfo));
+ }
+diff --git a/Messages/src/lib/useChatData.ts b/Messages/src/lib/useChatData.ts
+deleted file mode 100644
+index 5395b838..00000000
+--- a/Messages/src/lib/useChatData.ts
++++ /dev/null
+@@ -1,97 +0,0 @@
+-import { useState, useEffect } from 'react';
+-import { collection, onSnapshot, query, where, orderBy, doc, Timestamp, updateDoc, setDoc } from 'firebase/firestore';
+-import { getDb, handleFirestoreError, OperationType } from '../firebase';
+-import { Chat, Message } from '../types';
+-
+-export function useChatData(userId: string | undefined) {
+-  const [chats, setChats] = useState<Chat[]>([]);
+-  const [messages, setMessages] = useState<Record<string, Message[]>>({});
+-  const [loadingChats, setLoadingChats] = useState(true);
+-
+-  // Subscribe to user's chats
+-  useEffect(() => {
+-    if (!userId || !getDb()) {
+-      setChats([]);
+-      setLoadingChats(false);
+-      return;
+-    }
+-
+-    const chatsQuery = query(
+-      collection(getDb(), 'chats'),
+-      where('participants', 'array-contains', userId),
+-      orderBy('lastMessageAt', 'desc')
+-    );
+-
+-    const unsubscribe = onSnapshot(chatsQuery, 
+-      (snapshot) => {
+-        const chatsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Chat));
+-        setChats(chatsList);
+-        setLoadingChats(false);
+-      },
+-      (error) => {
+-        handleFirestoreError(error, OperationType.LIST, 'chats');
+-        setLoadingChats(false);
+-      }
+-    );
+-
+-    return () => unsubscribe();
+-  }, [userId]);
+-
+-  // Read messages for an active chat
+-  const subscribeToMessages = (chatId: string) => {
+-    if (!chatId || !getDb()) return () => {};
+-
+-    const q = query(
+-      collection(getDb(), `chats/${chatId}/messages`),
+-      orderBy('createdAt', 'asc')
+-    );
+-
+-    return onSnapshot(q, 
+-      (snapshot) => {
+-        const chatMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+-        setMessages(prev => ({ ...prev, [chatId]: chatMessages }));
+-      },
+-      (error) => {
+-        handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
+-      }
+-    );
+-  };
+-
+-  const markAsRead = async (chatId: string, currentUserId: string) => {
+-    if (!getDb()) return;
+-    try {
+-      const chatRef = doc(getDb(), 'chats', chatId);
+-      // Construct dynamic field name to reset unread count
+-      const fieldPath = `unreadCount.${currentUserId}`;
+-      await updateDoc(chatRef, {
+-        [fieldPath]: 0
+-      });
+-    } catch (error) {
+-      handleFirestoreError(error, OperationType.UPDATE, `chats/${chatId}`);
+-    }
+-  };
+-
+-  const createChat = async (participants: string[]): Promise<string | undefined> => {
+-    if (!getDb()) return;
+-    try {
+-      // Very basic id generation instead of random to maintain predictable scaling.
+-      const chatId = 'chat-' + Math.random().toString(36).substr(2, 9);
+-      const chatRef = doc(getDb(), 'chats', chatId);
+-      
+-      const unreadCount: Record<string, number> = {};
+-      participants.forEach(p => unreadCount[p] = 0);
+-
+-      await setDoc(chatRef, {
+-        participants,
+-        unreadCount,
+-        lastMessageAt: Timestamp.now()
+-      });
+-      return chatId;
+-    } catch (error) {
+-       handleFirestoreError(error, OperationType.CREATE, 'chats');
+-    }
+-  };
+-
+-  return { chats, messages, loadingChats, subscribeToMessages, markAsRead, createChat };
+-}
+-
+diff --git a/Messages/src/lib/useFilteredUsers.ts b/Messages/src/lib/useFilteredUsers.ts
+deleted file mode 100644
+index d496c84f..00000000
+--- a/Messages/src/lib/useFilteredUsers.ts
++++ /dev/null
+@@ -1,98 +0,0 @@
+-import { useState, useEffect, useMemo, useCallback } from 'react';
+-import { collection, onSnapshot, query, doc } from 'firebase/firestore';
+-import { getDb, handleFirestoreError, OperationType } from '../firebase';
+-import { UserProfile } from '../types';
+-
+-export function useFilteredUsers(currentUser: UserProfile | null, initialUsersList?: UserProfile[]) {
+-  const [allUsers, setAllUsers] = useState<UserProfile[]>(initialUsersList || []);
+-  const [loading, setLoading] = useState(!initialUsersList);
+-  const [localUser, setLocalUser] = useState<UserProfile | null>(currentUser);
+-
+-  // Keep local user in sync with prop
+-  useEffect(() => {
+-    setLocalUser(currentUser);
+-  }, [currentUser]);
+-
+-  // Sync from parent when initialUsersList changes
+-  useEffect(() => {
+-    if (initialUsersList) {
+-      setAllUsers(initialUsersList);
+-      setLoading(false);
+-    }
+-  }, [initialUsersList]);
+-
+-  // Subscribe to current user's document for real-time updates
+-  useEffect(() => {
+-    if (initialUsersList || !currentUser?.uid || !getDb()) return;
+-    
+-    const userRef = doc(getDb(), 'users', currentUser.uid);
+-    const unsubscribeUser = onSnapshot(userRef, 
+-      (snapshot) => {
+-        if (snapshot.exists()) {
+-          setLocalUser({ uid: snapshot.id, ...snapshot.data() } as UserProfile);
+-        }
+-      },
+-      (error) => {
+-        handleFirestoreError(error, OperationType.GET, 'users');
+-      }
+-    );
+-
+-    return () => unsubscribeUser();
+-  }, [currentUser?.uid, initialUsersList]);
+-
+-  // Only subscribe to Firestore if no initialUsersList provided
+-  useEffect(() => {
+-    if (initialUsersList) return; // Parent provides data, skip Firestore
+-    if (!currentUser || !getDb()) {
+-      setAllUsers([]);
+-      setLoading(false);
+-      return;
+-    }
+-
+-    const q = query(collection(getDb(), 'users'));
+-    
+-    const unsubscribe = onSnapshot(q, 
+-      (snapshot) => {
+-        const users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+-        setAllUsers(users);
+-        setLoading(false);
+-      },
+-      (error) => {
+-        handleFirestoreError(error, OperationType.LIST, 'users');
+-        setLoading(false);
+-      }
+-    );
+-
+-    return () => unsubscribe();
+-  }, [currentUser, initialUsersList]);
+-
+-  // Apply strict UI filtering logic based on roles and restrictions
+-  const filteredUsers = useMemo(() => {
+-    if (!localUser) return [];
+-
+-    return allUsers.filter(targetUser => {
+-        // You always see yourself (optional, depending on UI needs, but generally excluded from Contact lists in the component itself)
+-        if (targetUser.uid === localUser.uid) return true;
+-
+-        // 1. If I am a commercial, I cannot see suppliers with adminOnly = true
+-        if (localUser.role === 'commercial' && targetUser.role === 'prestataire' && targetUser.adminOnly) return false;
+-        
+-        // 2. If I am a supplier with adminOnly = true, I can only see admins
+-        if (localUser.role === 'prestataire' && localUser.adminOnly && targetUser.role !== 'admin') return false;
+-
+-        // 3. Restricted Contacts (Mutual Isolation via metadata defined by admin)
+-        if (localUser.restrictedContacts?.includes(targetUser.uid)) return false;
+-
+-        // 4. Global Isolation:
+-        // An isolated user only sees admins and is only seen by admins.
+-        if (localUser.role !== 'admin') {
+-          if (localUser.isIsolated && targetUser.role !== 'admin') return false;
+-          if (targetUser.isIsolated) return false;
+-        }
+-
+-        return true;
+-    });
+-  }, [allUsers, localUser]);
+-
+-  return { allUsers, filteredUsers, loading, currentUser: localUser };
+-}

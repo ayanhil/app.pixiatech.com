@@ -1,0 +1,188 @@
+/* Aura Design System Tokens - Montclair Light Mode */
+:root {
+  --aura-bg: #ffffff;
+  --aura-card: #ffffff;
+  --aura-border: #e2e8f0;
+  --aura-accent: #3b82f6;
+  --aura-accent-glow: rgba(59, 130, 246, 0.2);
+  --aura-success: #10b981;
+  --aura-text-dim: #64748b;
+}
+
+/* Base Utility */
+.font-display {
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+/* Glassmorphism Components */
+.glass-card {
+  background-color: var(--aura-card) !important;
+  border: 1px solid var(--aura-border) !important;
+  border-radius: 1rem;
+  box-shadow: 0 4px 24px -1px rgba(0, 0, 0, 0.4);
+}
+
+.neon-input {
+  background-color: white !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  transition: all 0.2s;
+}
+
+.neon-input:focus {
+  outline: none;
+  border-color: var(--aura-accent) !important;
+  box-shadow: 0 0 0 1px var(--aura-accent) !important;
+}
+
+.futuristic-btn-primary {
+  position: relative;
+  overflow: hidden;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1rem 2rem;
+  border-radius: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.75rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: var(--aura-accent) !important;
+  color: white !important;
+  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+}
+
+.futuristic-btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(59, 130, 246, 0.5);
+  filter: brightness(1.1);
+}
+
+.futuristic-btn-secondary {
+  position: relative;
+  overflow: hidden;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1rem 2rem;
+  border-radius: 1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.75rem;
+  transition: all 0.3s;
+  border: 1px solid #e2e8f0 !important;
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.futuristic-btn-secondary:hover {
+  background-color: #f1f5f9 !important;
+  border-color: var(--aura-accent) !important;
+}
+
+/* Fixed Footer Layout */
+.aura-footer-fixed {
+  padding: 2rem;
+  padding-top: 2.5rem;
+  border-top: 1px solid #e2eec0;
+  background-color: rgba(248, 250, 240, 0.95);
+  backdrop-filter: blur(24px);
+  position: relative;
+  z-index: 50;
+}
+
+/* Neon Halo Effect */
+.emerald-neon-halo {
+  position: relative;
+}
+
+.emerald-neon-halo::after {
+  content: none !important;
+}
+
+.neon-text-emerald {
+  color: #9AAE00 !important;
+  text-shadow: none;
+}
+
+/* Scrollbar */
+.custom-sidebar-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: var(--aura-border);
+  border-radius: 10px;
+}
+.custom-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Payment Step Row Hover Effect */
+.payment-step-row {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.payment-step-row:hover {
+  background-color: #C3F53C;
+  border-color: #C3F53C;
+}
+
+.payment-step-row:hover .payment-step-label,
+.payment-step-row:hover .payment-step-date,
+.payment-step-row:hover .payment-step-amount,
+.payment-step-row:hover .payment-step-badge {
+  color: #000000;
+}
+
+.payment-step-row:hover .payment-step-number {
+  background-color: #000000;
+  color: #C3F53C;
+}
+
+/* Transitions */
+.drawer-content-enter {
+  opacity: 0;
+  transform: translateX(20px);
+}
+.drawer-content-enter-active {
+  opacity: 1;
+  transform: translateX(0);
+  transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Hide number input spinners */
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button { 
+  -webkit-appearance: none !important; 
+  margin: 0 !important; 
+}
+input[type=number] {
+  -moz-appearance: textfield !important;
+}
+
+/* Custom Select styling */
+.custom-select-option {
+  @apply flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors cursor-pointer border-b border-white/5 last:border-0;
+}
+
+.custom-select-trigger {
+  @apply flex items-center justify-between w-full px-4 py-2 bg-white/5 border border-aura-border rounded-xl cursor-pointer transition-all min-h-[44px];
+}
+
+.custom-select-trigger:hover {
+  border-color: var(--aura-accent);
+  box-shadow: 0 0 0 1px var(--aura-accent-glow);
+}
+
+

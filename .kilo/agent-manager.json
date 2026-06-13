@@ -1,0 +1,37 @@
+{
+  "worktrees": {
+    "wt-1780314400812-1": {
+      "branch": "classic-jargon",
+      "path": "f:\\PIXIATECH\\new d\\Estimation V3\\.kilo\\worktrees\\classic-jargon",
+      "parentBranch": "main",
+      "createdAt": "2026-06-01T11:46:40.812Z",
+      "remote": "origin"
+    },
+    "wt-1780626144126-1": {
+      "branch": "lying-bard",
+      "path": "f:\\PIXIATECH\\new d\\Estimation V3\\.kilo\\worktrees\\lying-bard",
+      "parentBranch": "main",
+      "createdAt": "2026-06-05T02:22:24.126Z",
+      "remote": "origin"
+    }
+  },
+  "sessions": {
+    "ses_17cfe14d0fferzY20z6Y1zg3nE": {
+      "worktreeId": "wt-1780314400812-1",
+      "createdAt": "2026-06-01T11:46:41.592Z"
+    },
+    "ses_16a69434fffepQu2k1IDoThBkd": {
+      "worktreeId": "wt-1780626144126-1",
+      "createdAt": "2026-06-05T02:22:25.421Z"
+    }
+  },
+  "tabOrder": {
+    "local": [
+      "pending:1"
+    ]
+  },
+  "worktreeOrder": [
+    "wt-1780314400812-1",
+    "wt-1780626144126-1"
+  ]
+}
